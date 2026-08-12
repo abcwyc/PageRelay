@@ -1,0 +1,16 @@
+{{define "login"}}
+<main class="login-wrap">
+  <section class="login-card">
+    <div class="brand-logo brand-login"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>FileHub</small></div>
+    <p class="eyebrow">企业文件空间</p>
+    <h1>欢迎回来</h1>
+    <p class="muted">登录后管理文件、创建分享链接。</p>
+    {{if .Error}}<div class="alert">{{.Error}}</div>{{end}}
+    <form method="post" action="/login" class="form-stack" id="login-form">
+      <label>用户名<input name="username" autocomplete="username" required autofocus></label>
+      <label>密码<input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit" class="btn primary wide">登录</button>
+    </form>
+  </section>
+</main>
+{{end}}

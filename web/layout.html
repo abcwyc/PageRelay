@@ -1,0 +1,40 @@
+{{define "layout.html"}}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{{.Data.Title}} · FileHub</title>
+  <link rel="stylesheet" href="/assets/app.css?v=4">
+</head>
+<body class="page-{{.View}}">
+{{if eq .View "login"}}{{template "login" .Data}}
+{{else if eq .View "public"}}{{template "public" .Data}}
+{{else if eq .View "files"}}{{template "files" .Data}}
+{{else}}
+  <div class="legacy-shell">
+    <aside class="legacy-sidebar">
+      <a class="brand-logo" href="/files"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>FileHub</small></a>
+      <nav>
+        <a href="/files">文件工作台</a>
+        <a class="{{if eq .Data.Page "shares"}}active{{end}}" href="/shares">分享记录</a>
+        {{if isAdmin .Data.Role}}
+        <span class="nav-label">系统管理</span>
+        <a class="{{if eq .Data.Page "users"}}active{{end}}" href="/admin/users">账号管理</a>
+        <a class="{{if eq .Data.Page "audit"}}active{{end}}" href="/admin/audit">审计日志</a>
+        {{end}}
+      </nav>
+      <a class="back-workspace" href="/files">← 返回工作台</a>
+    </aside>
+    <main class="legacy-content">
+      {{if eq .View "shares"}}{{template "shares" .Data}}{{end}}
+      {{if eq .View "users"}}{{template "users" .Data}}{{end}}
+      {{if eq .View "audit"}}{{template "audit" .Data}}{{end}}
+    </main>
+  </div>
+{{end}}
+<script src="/assets/app.js?v=8" defer></script>
+</body>
+</html>
+{{end}}

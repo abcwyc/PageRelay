@@ -1,0 +1,122 @@
+{{define "files"}}
+<div id="file-workspace" class="workspace" data-csrf="{{.CSRF}}" data-username="{{.Username}}" data-role="{{.Role}}" data-initial-path="{{.CurrentPath}}" data-used="{{.Used}}" data-quota="{{.Quota}}">
+  <aside id="workspace-sidebar" class="workspace-sidebar" aria-label="文件导航">
+    <header class="sidebar-brand">
+      <a href="/files" aria-label="哈啰租车 FileHub 首页"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><span>FileHub</span></a>
+      <button id="sidebar-close" class="quiet-icon mobile-only" type="button" aria-label="关闭文件导航">×</button>
+    </header>
+
+    <form id="upload-form" class="side-upload" method="post" action="/upload" enctype="multipart/form-data" tabindex="0" aria-label="上传文件">
+      <input type="hidden" name="csrf" value="{{.CSRF}}"><input id="upload-path" type="hidden" name="path" value="{{.CurrentPath}}">
+      <input id="file-input" type="file" name="files" multiple hidden>
+      <span class="upload-symbol" aria-hidden="true">↑</span>
+      <span><strong>上传文件</strong><small>拖拽到这里，或点击选择</small></span>
+      <span class="upload-shortcut">U</span>
+      <div class="upload-progress" hidden><i></i></div>
+    </form>
+    <div id="upload-queue" class="upload-queue" hidden aria-live="polite"></div>
+
+    <section class="tree-section">
+      <div class="section-label"><span>文件目录</span><button id="tree-refresh" class="quiet-icon" type="button" aria-label="刷新目录">↻</button></div>
+      <div id="file-tree" class="file-tree" role="tree">
+        <button class="tree-row root-row selected" type="button" data-tree-path="" data-type="dir" role="treeitem" aria-level="1" aria-expanded="true" aria-selected="true" tabindex="0">
+          <span class="tree-chevron" aria-hidden="true">⌄</span><span class="tree-icon folder-icon" aria-hidden="true"></span><span class="tree-name">{{.Username}}</span>
+        </button>
+        <div id="tree-root" class="tree-children" role="group"></div>
+      </div>
+    </section>
+
+    <footer class="sidebar-footer">
+      <details id="new-menu" class="footer-menu">
+        <summary><span class="footer-icon">＋</span><span>新建</span><kbd>N</kbd></summary>
+        <div class="menu-popover new-popover">
+          <button type="button" data-new-kind="folder"><span>文件夹</span><kbd>F</kbd></button>
+          <button type="button" data-new-kind="markdown"><span>Markdown</span><small>.md</small></button>
+          <button type="button" data-new-kind="html"><span>HTML 页面</span><small>.html</small></button>
+          <button type="button" data-new-kind="text"><span>纯文本</span><small>.txt</small></button>
+        </div>
+      </details>
+      <div class="storage-block">
+        <div><span>存储空间</span><span id="storage-label">{{formatBytes .Used}} / {{formatBytes .Quota}}</span></div>
+        <div class="storage-meter"><i id="storage-meter" style="width:{{pct .Used .Quota}}%"></i></div>
+      </div>
+      <details id="account-menu" class="footer-menu account-menu">
+        <summary><span class="avatar">{{slice .Username 0 1}}</span><span class="account-copy"><strong>{{.Username}}</strong><small>{{if isAdmin .Role}}管理员{{else}}成员{{end}}</small></span><span class="menu-dots">•••</span></summary>
+        <div class="menu-popover account-popover">
+          {{if isAdmin .Role}}<a href="/admin/users">账号管理</a><a href="/admin/audit">审计日志</a>{{end}}
+          <a href="/shares">分享记录</a>
+          <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button type="submit">退出登录</button></form>
+        </div>
+      </details>
+    </footer>
+  </aside>
+
+  <div id="workspace-divider" class="workspace-divider" role="separator" aria-label="调整侧栏宽度" aria-orientation="vertical" tabindex="0"></div>
+
+  <main class="workspace-main">
+    <header class="workspace-topbar">
+      <button id="sidebar-open" class="quiet-icon mobile-only" type="button" aria-label="打开文件导航">☰</button>
+      <div class="path-block"><span id="context-label">当前位置</span><strong id="logical-path">/{{.Username}}{{if .CurrentPath}}/{{.CurrentPath}}{{end}}</strong></div>
+      <div id="selection-actions" class="selection-actions" hidden>
+        <label class="share-switch" title="开启或关闭公开分享"><span>分享</span><input id="share-toggle" type="checkbox"><i></i></label>
+        <button id="copy-share" class="action-button" type="button" disabled>复制链接</button>
+        <button id="copy-path" class="action-button" type="button">复制路径</button>
+        <a id="download-file" class="action-button" href="#" download hidden>下载</a>
+        <details id="file-actions" class="top-menu">
+          <summary class="quiet-icon" aria-label="更多文件操作">•••</summary>
+          <div class="menu-popover action-popover">
+            <button id="edit-file" type="button">编辑内容</button>
+            <button id="rename-file" type="button">重命名 <kbd>F2</kbd></button>
+            <button id="move-file" type="button">移动到…</button>
+            <button id="delete-file" class="danger-text" type="button">删除 <kbd>Delete</kbd></button>
+          </div>
+        </details>
+      </div>
+      <div id="batch-actions" class="batch-actions" hidden><strong id="batch-count">已选择 0 项</strong><button id="batch-download" class="action-button" type="button">下载</button><button id="batch-move" class="action-button" type="button">移动到…</button><button id="batch-delete" class="action-button danger-outline" type="button">删除</button><button id="batch-clear" class="quiet-icon" type="button" aria-label="取消多选">×</button></div>
+    </header>
+
+    <section id="directory-view" class="directory-view">
+      <header class="content-heading">
+        <div><h1 id="folder-title">{{if .CurrentPath}}{{.CurrentPath}}{{else}}{{.Username}}{{end}}</h1><p id="folder-summary">正在读取文件…</p></div>
+        <label class="file-search"><span>⌕</span><input id="file-search" type="search" placeholder="搜索当前目录" autocomplete="off"><kbd>⌘K</kbd></label>
+      </header>
+      <div class="file-table" role="grid" aria-label="文件列表">
+        <div class="file-table-head" role="row">
+          <label class="selection-cell"><input id="select-all" type="checkbox" aria-label="选择当前目录全部项目"></label>
+          <button type="button" data-sort="name">名称 <span></span></button>
+          <button type="button" data-sort="modified">更新时间 <span></span></button>
+          <button type="button" data-sort="size">大小 <span></span></button>
+          <span>分享</span>
+          <span>操作</span>
+        </div>
+        <div id="file-list" class="file-list" role="rowgroup"></div>
+      </div>
+    </section>
+
+    <section id="preview-view" class="preview-view" hidden>
+      <header class="preview-heading">
+        <button id="preview-back" class="back-button" type="button">← 返回文件列表</button>
+        <div><h1 id="preview-title"></h1><p id="preview-meta"></p></div>
+        <div class="preview-mode-actions"><button id="source-toggle" class="action-button" type="button" hidden>查看源码</button></div>
+      </header>
+      <div id="preview-stage" class="preview-stage"></div>
+      <footer id="file-metadata" class="file-metadata"></footer>
+    </section>
+  </main>
+  <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="关闭侧栏" hidden></button>
+</div>
+
+<dialog id="new-dialog"><form id="new-form" class="dialog-card"><button type="button" class="dialog-close" aria-label="关闭">×</button><div><p class="dialog-eyebrow">新建内容</p><h2 id="new-dialog-title">新建文件夹</h2></div><input id="new-kind" type="hidden"><label>名称<input id="new-name" name="name" required maxlength="160" autocomplete="off"></label><button class="btn primary wide" type="submit">创建</button></form></dialog>
+<dialog id="rename-dialog"><form id="rename-form" class="dialog-card"><button type="button" class="dialog-close" aria-label="关闭">×</button><div><p class="dialog-eyebrow">文件操作</p><h2>重命名</h2></div><label>新名称<input id="rename-name" name="name" required maxlength="160" autocomplete="off"></label><button class="btn primary wide" type="submit">保存</button></form></dialog>
+<dialog id="editor-dialog" class="editor-dialog"><form id="editor-form" class="editor-card"><header><div><p class="dialog-eyebrow">文本编辑</p><h2 id="editor-title">编辑文件</h2></div><button type="button" class="dialog-close" aria-label="关闭">×</button></header><textarea id="editor-content" spellcheck="false" aria-label="文件内容"></textarea><footer><span>最大 5 MB</span><button type="button" class="btn dialog-cancel">取消</button><button class="btn primary" type="submit">保存更改</button></footer></form></dialog>
+<dialog id="move-dialog"><form id="move-form" class="dialog-card"><button type="button" class="dialog-close" aria-label="关闭">×</button><div><p class="dialog-eyebrow">文件操作</p><h2>移动到</h2><p id="move-summary" class="muted"></p></div><label>目标目录<select id="move-destination" required></select></label><button class="btn primary wide" type="submit">移动</button></form></dialog>
+<dialog id="command-dialog" class="command-dialog"><div class="command-card"><label class="command-search"><span>⌕</span><input id="command-input" type="search" placeholder="搜索文件或输入命令…" autocomplete="off"><kbd>Esc</kbd></label><div id="command-results" class="command-results" role="listbox"></div><footer><span>↑↓ 选择</span><span>Enter 打开</span><span>⌘K 命令面板</span></footer></div></dialog>
+<dialog id="confirm-dialog"><form method="dialog" class="dialog-card confirm-card"><div><p class="dialog-eyebrow">请确认</p><h2 id="confirm-title">删除文件？</h2><p id="confirm-message" class="muted"></p></div><div class="dialog-actions"><button class="btn" value="cancel">取消</button><button id="confirm-submit" class="btn danger-button" value="confirm">删除</button></div></form></dialog>
+<div id="row-action-menu" class="menu-popover row-action-popover" role="menu" hidden>
+  <button id="row-edit-file" type="button" role="menuitem">编辑内容</button>
+  <button id="row-rename-file" type="button" role="menuitem">重命名 <kbd>F2</kbd></button>
+  <button id="row-move-file" type="button" role="menuitem">移动到…</button>
+  <button id="row-delete-file" class="danger-text" type="button" role="menuitem">删除 <kbd>Delete</kbd></button>
+</div>
+<div id="toast-region" class="toast-region" aria-live="polite"></div>
+{{end}}

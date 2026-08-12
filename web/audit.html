@@ -1,0 +1,4 @@
+{{define "audit"}}
+<header class="page-head"><div><p class="eyebrow">系统管理</p><h1>审计日志</h1></div></header>
+<section class="panel"><div class="table-head audit-cols"><span>时间</span><span>账号</span><span>动作</span><span>目标</span><span>来源 IP</span></div>{{range .Audit}}<div class="file-row audit-cols"><span>{{index . "time"}}</span><strong>{{index . "user"}}</strong><span><em class="badge">{{index . "action"}}</em></span><span class="truncate">{{index . "target"}}</span><span>{{index . "ip"}}</span></div>{{else}}<div class="empty">暂无日志</div>{{end}}</section>
+{{end}}

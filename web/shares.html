@@ -1,0 +1,12 @@
+{{define "shares"}}
+<header class="page-head"><div><p class="eyebrow">外部传阅</p><h1>分享记录</h1></div></header>
+<section class="panel">
+  <div class="table-head share-cols"><span>名称</span><span>链接</span><span>状态</span><span></span></div>
+  {{range .Shares}}<div class="file-row share-cols">
+    <span class="file-name"><b class="file-icon">↗</b><span><strong>{{.Name}}</strong><small>{{.RelPath}}</small></span></span>
+    <span class="share-link"><input readonly value="{{$.ShareURL}}{{.Token}}"><button class="icon-btn copy-btn" data-copy="{{$.ShareURL}}{{.Token}}">复制</button></span>
+    <span>{{if .Active}}<em class="badge success">有效</em>{{else}}<em class="badge">已关闭</em>{{end}}</span>
+    <span>{{if .Active}}<form method="post" action="/shares/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="id" value="{{.ID}}"><button class="icon-btn danger">关闭</button></form>{{end}}</span>
+  </div>{{else}}<div class="empty"><strong>暂无分享记录</strong><span>新上传文件会默认开启分享，也可以在工作台随时关闭。</span></div>{{end}}
+</section>
+{{end}}
