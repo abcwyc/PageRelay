@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="PageRelay icon">
+  <rect width="64" height="64" rx="16" fill="#F1EEE7"/>
+  <path d="M17 52V12h16.5C44 12 50 18 50 26.2S44 40.5 33.5 40.5H17" fill="none" stroke="#173D33" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M33 34 50 52" fill="none" stroke="#173D33" stroke-width="5.5" stroke-linecap="round"/>
+  <circle cx="50" cy="52" r="3" fill="#CF7659"/>
+</svg>

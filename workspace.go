@@ -723,7 +723,7 @@ func (a *app) publicPreview(w http.ResponseWriter, r *http.Request) {
 			a.serveMarkdownPreview(w, r, source, sourceInfo.Name(), "/p/"+parts[0]+"/")
 			return
 		}
-		servePreviewFile(w, r, source, sourceInfo, a.managementOrigin())
+		servePreviewFile(w, r, source, sourceInfo, a.managementOrigin(r))
 		return
 	}
 	base := source
@@ -748,7 +748,7 @@ func (a *app) publicPreview(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	servePreviewFile(w, r, target, info, a.managementOrigin())
+	servePreviewFile(w, r, target, info, a.managementOrigin(r))
 }
 
 func (a *app) serveMarkdownPreview(w http.ResponseWriter, r *http.Request, file, title, baseURL string) {
@@ -774,7 +774,7 @@ func (a *app) serveMarkdownPreview(w http.ResponseWriter, r *http.Request, file,
 		mermaidScripts = `<script src="/assets/mermaid.min.js?v=11.16.1"></script><script>(()=>{const blocks=[...document.querySelectorAll('pre>code.language-mermaid')];for(const block of blocks){const diagram=document.createElement('div');diagram.className='mermaid';diagram.textContent=block.textContent;block.parentElement.replaceWith(diagram)}mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'neutral',fontFamily:'-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif'});mermaid.run({querySelector:'.mermaid'}).catch(()=>{document.querySelectorAll('.mermaid').forEach(node=>node.classList.add('mermaid-error'))})})()</script>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; base-uri 'self'; frame-ancestors "+a.managementOrigin())
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; base-uri 'self'; frame-ancestors "+a.managementOrigin(r))
 	_, _ = fmt.Fprintf(w, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><base href="%s"><title>%s</title><style>%s</style></head><body><article>%s</article>%s</body></html>`, htmltpl.HTMLEscapeString(baseURL), htmltpl.HTMLEscapeString(title), markdownCSS, rendered.String(), mermaidScripts)
 }
 
@@ -795,12 +795,31 @@ func servePreviewFile(w http.ResponseWriter, r *http.Request, file string, info 
 }
 
 func (a *app) previewBase(r *http.Request) string {
+	if a.cfg.managementBase != "" {
+		return strings.TrimRight(a.cfg.managementBase, "/") + "/p/"
+	}
 	base := strings.TrimSuffix(a.shareBase(r), "/s/")
 	return base + "/p/"
 }
 
-func (a *app) managementOrigin() string {
-	return "http://" + a.cfg.listen
+func (a *app) managementOrigin(r *http.Request) string {
+	if a.cfg.managementBase != "" {
+		return strings.TrimRight(a.cfg.managementBase, "/")
+	}
+	scheme := "http"
+	if r != nil {
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+			scheme = strings.Split(v, ",")[0]
+		}
+	}
+	host := a.cfg.listen
+	if r != nil && r.Host != "" {
+		host = r.Host
+	}
+	return scheme + "://" + host
 }
 
 func (a *app) writeSuccess(w http.ResponseWriter, r *http.Request, dir string) {

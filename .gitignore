@@ -1,7 +1,20 @@
+# compiled binaries
 /filehub
+/company-filehub
+/PageRelay
 /dist/
+
+# runtime data (local dev / deploy)
+/.deploy/
+/data/
 /*.db
 /*.db-shm
 /*.db-wal
+*.log
+
+# design source files
+/PageRelay-logo-v2
+
+# env & OS
 /.env
 /.DS_Store

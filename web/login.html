@@ -1,15 +1,11 @@
 {{define "login"}}
 <main class="login-wrap">
   <section class="login-card">
-    <div class="brand-logo brand-login"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>PageRelay</small></div>
+    <div class="brand-logo brand-login"><img src="/assets/pagerelay-logo.svg" alt="PageRelay"></div>
     {{if eq .Lang "en"}}
-    <p class="eyebrow">Enterprise file space</p>
-    <h1>Welcome back</h1>
     <p class="login-slogan">{{.Slogan}}</p>
     <p class="muted">Sign in to manage files and create share links.</p>
     {{else}}
-    <p class="eyebrow">企业文件空间</p>
-    <h1>欢迎回来</h1>
     <p class="login-slogan">{{.Slogan}}</p>
     <p class="muted">登录后管理文件、创建分享链接。</p>
     {{end}}

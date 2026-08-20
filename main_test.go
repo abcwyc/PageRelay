@@ -77,6 +77,13 @@ func requestWithCookie(method, target string, body io.Reader, cookie *http.Cooki
 }
 
 func uploadFile(t *testing.T, h http.Handler, cookie *http.Cookie, csrf, name, contents string) *httptest.ResponseRecorder {
+	return uploadFileWithName(t, h, cookie, csrf, name, contents)
+}
+
+// uploadFileWithName sends a multipart upload where relPath is provided
+// via the parallel paths[] field to simulate a folder upload that
+// preserves structure. The on-wire filename is the base name.
+func uploadFileWithName(t *testing.T, h http.Handler, cookie *http.Cookie, csrf, relPath, contents string) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
@@ -86,7 +93,10 @@ func uploadFile(t *testing.T, h http.Handler, cookie *http.Cookie, csrf, name, c
 	if err := mw.WriteField("path", ""); err != nil {
 		t.Fatal(err)
 	}
-	part, err := mw.CreateFormFile("files", name)
+	if err := mw.WriteField("paths", relPath); err != nil {
+		t.Fatal(err)
+	}
+	part, err := mw.CreateFormFile("files", filepath.Base(relPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +214,7 @@ func TestAccountIsolationUploadAndPublicShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicRec := httptest.NewRecorder()
-	public.ServeHTTP(publicRec, httptest.NewRequest(http.MethodGet, "/s/"+token, nil))
+	public.ServeHTTP(publicRec, httptest.NewRequest(http.MethodGet, "/s/"+token+"/", nil))
 	if publicRec.Code != http.StatusOK || !strings.Contains(publicRec.Body.String(), "Shared page") {
 		t.Fatalf("public share status=%d body=%s", publicRec.Code, publicRec.Body.String())
 	}
@@ -294,7 +304,7 @@ func TestWorkspaceAPIsPermanentShareAndPreview(t *testing.T) {
 		!strings.Contains(workspacePage.Body.String(), `id="row-rename-file"`) ||
 		!strings.Contains(workspacePage.Body.String(), `id="row-delete-file"`) ||
 		!strings.Contains(workspacePage.Body.String(), `id="main-upload-overlay"`) ||
-		!strings.Contains(workspacePage.Body.String(), `/assets/rental-app-icon.png?v=1`) {
+		!strings.Contains(workspacePage.Body.String(), `/assets/pagerelay-icon.svg?v=2`) {
 		t.Fatal("workspace file list is missing per-row file actions")
 	}
 
@@ -420,13 +430,13 @@ func TestWorkspaceAPIsPermanentShareAndPreview(t *testing.T) {
 	}
 
 	logoRec := httptest.NewRecorder()
-	manage.ServeHTTP(logoRec, httptest.NewRequest(http.MethodGet, "/assets/hello-rental-logo.png", nil))
-	if logoRec.Code != http.StatusOK || logoRec.Header().Get("Content-Type") != "image/png" || logoRec.Body.Len() < 1000 {
+	manage.ServeHTTP(logoRec, httptest.NewRequest(http.MethodGet, "/assets/pagerelay-logo.svg", nil))
+	if logoRec.Code != http.StatusOK || logoRec.Header().Get("Content-Type") != "image/svg+xml; charset=utf-8" || logoRec.Body.Len() < 200 {
 		t.Fatalf("logo asset status=%d type=%q bytes=%d", logoRec.Code, logoRec.Header().Get("Content-Type"), logoRec.Body.Len())
 	}
 	iconRec := httptest.NewRecorder()
-	manage.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/assets/rental-app-icon.png", nil))
-	if iconRec.Code != http.StatusOK || iconRec.Header().Get("Content-Type") != "image/png" || iconRec.Body.Len() < 1000 {
+	manage.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/assets/pagerelay-icon.svg", nil))
+	if iconRec.Code != http.StatusOK || iconRec.Header().Get("Content-Type") != "image/svg+xml; charset=utf-8" || iconRec.Body.Len() < 200 {
 		t.Fatalf("icon asset status=%d type=%q bytes=%d", iconRec.Code, iconRec.Header().Get("Content-Type"), iconRec.Body.Len())
 	}
 }
@@ -514,5 +524,243 @@ func TestBatchMoveDownloadAndDelete(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(a.userRoot(p.UserID), filepath.FromSlash(rel))); !os.IsNotExist(err) {
 			t.Fatalf("deleted file still exists: %s", rel)
 		}
+	}
+}
+
+// newTestAppWithDefaultAdmin bootstraps an admin with the fixed default
+// credentials (no explicit password), so the forced-password-change flow
+// can be exercised.
+func newTestAppWithDefaultAdmin(t *testing.T) *app {
+	t.Helper()
+	root := t.TempDir()
+	cfg := config{
+		dbPath:    filepath.Join(root, "filehub.db"),
+		dataDir:   filepath.Join(root, "data"),
+		adminUser: "admin",
+		publicBase: "http://share.test",
+	}
+	if err := os.MkdirAll(cfg.dataDir, 0750); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+cfg.dbPath+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	a := &app{db: db, cfg: cfg, templates: parseTemplates()}
+	if err := a.migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.bootstrapAdmin(); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// loginAsRaw posts credentials and returns the recorder + session cookie so
+// callers can inspect the redirect target.
+func loginAsRaw(t *testing.T, h http.Handler, username, password string) (*httptest.ResponseRecorder, *http.Cookie) {
+	t.Helper()
+	form := url.Values{"username": {username}, "password": {password}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("login status = %d, body = %s", w.Code, w.Body.String())
+	}
+	for _, cookie := range w.Result().Cookies() {
+		if cookie.Name == "filehub_session" {
+			return w, cookie
+		}
+	}
+	t.Fatal("login did not set a session cookie")
+	return nil, nil
+}
+
+func TestBootstrapDefaultAdminForcesPasswordChange(t *testing.T) {
+	a := newTestAppWithDefaultAdmin(t)
+	manage := a.managementHandler()
+
+	// Default credentials must be admin/admin.
+	rec, cookie := loginAsRaw(t, manage, "admin", "admin")
+	if loc := rec.Result().Header.Get("Location"); loc != "/change-password" {
+		t.Fatalf("login redirect = %q, want /change-password", loc)
+	}
+
+	// Every protected route must bounce back to /change-password until changed.
+	filesRec := httptest.NewRecorder()
+	manage.ServeHTTP(filesRec, requestWithCookie(http.MethodGet, "/files", nil, cookie))
+	if loc := filesRec.Result().Header.Get("Location"); loc != "/change-password" {
+		t.Fatalf("/files redirect = %q, want /change-password", loc)
+	}
+
+	// Wrong current password must be rejected.
+	p, ok := a.authenticate(requestWithCookie(http.MethodGet, "/change-password", nil, cookie))
+	if !ok || !p.MustChangePassword {
+		t.Fatal("session must carry must_change_password before changing")
+	}
+	bad := postForm(t, manage, "/change-password", url.Values{
+		"csrf": {p.CSRF}, "current": {"wrong"}, "new": {"new-strong-password"}, "confirm": {"new-strong-password"},
+	}, cookie)
+	if bad.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong current password status=%d", bad.Code)
+	}
+
+	// Mismatched confirmation must be rejected.
+	mismatch := postForm(t, manage, "/change-password", url.Values{
+		"csrf": {p.CSRF}, "current": {"admin"}, "new": {"new-strong-password"}, "confirm": {"different-strong-pw"},
+	}, cookie)
+	if mismatch.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched confirm status=%d", mismatch.Code)
+	}
+
+	// Too-short new password must be rejected.
+	short := postForm(t, manage, "/change-password", url.Values{
+		"csrf": {p.CSRF}, "current": {"admin"}, "new": {"short"}, "confirm": {"short"},
+	}, cookie)
+	if short.Code != http.StatusBadRequest {
+		t.Fatalf("short new password status=%d", short.Code)
+	}
+
+	// Successful change.
+	ok2 := postForm(t, manage, "/change-password", url.Values{
+		"csrf": {p.CSRF}, "current": {"admin"}, "new": {"new-strong-password"}, "confirm": {"new-strong-password"},
+	}, cookie)
+	if loc := ok2.Result().Header.Get("Location"); loc != "/files" {
+		t.Fatalf("change-password redirect = %q, want /files", loc)
+	}
+
+	// must_change_password must be cleared afterward.
+	p2, ok := a.authenticate(requestWithCookie(http.MethodGet, "/files", nil, cookie))
+	if !ok || p2.MustChangePassword {
+		t.Fatal("must_change_password must be cleared after changing")
+	}
+
+	// /files is now reachable and the old default password no longer works.
+	filesRec2 := httptest.NewRecorder()
+	manage.ServeHTTP(filesRec2, requestWithCookie(http.MethodGet, "/files", nil, cookie))
+	if filesRec2.Code != http.StatusOK {
+		t.Fatalf("/files status after change=%d", filesRec2.Code)
+	}
+	oldForm := url.Values{"username": {"admin"}, "password": {"admin"}}
+	oldReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(oldForm.Encode()))
+	oldReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	oldRec := httptest.NewRecorder()
+	manage.ServeHTTP(oldRec, oldReq)
+	if oldRec.Code != http.StatusUnauthorized {
+		t.Fatalf("old default password status=%d, want 401", oldRec.Code)
+	}
+	// Login with the new password reaches /files.
+	rec2, _ := loginAsRaw(t, manage, "admin", "new-strong-password")
+	if loc := rec2.Result().Header.Get("Location"); loc != "/files" {
+		t.Fatalf("post-change login redirect = %q, want /files", loc)
+	}
+}
+
+func TestFolderUploadPreservesStructure(t *testing.T) {
+	a := newTestApp(t)
+	manage := a.managementHandler()
+	public := a.publicHandler()
+	cookie := loginAs(t, manage, "admin", testAdminPassword)
+	p, ok := a.authenticate(requestWithCookie(http.MethodGet, "/files", nil, cookie))
+	if !ok {
+		t.Fatal("not authenticated")
+	}
+
+	// Simulate a folder upload: the relPath carries the structure.
+	deep := uploadFileWithName(t, manage, cookie, p.CSRF, "projects/2024/report.md", "# Report\n")
+	if deep.Code != http.StatusSeeOther {
+		t.Fatalf("folder upload status=%d body=%s", deep.Code, deep.Body.String())
+	}
+	root := a.userRoot(p.UserID)
+	if _, err := os.Stat(filepath.Join(root, "projects", "2024", "report.md")); err != nil {
+		t.Fatalf("nested file not created: %v", err)
+	}
+
+	// The file must be reachable as a private download through the management UI.
+	priv := httptest.NewRecorder()
+	manage.ServeHTTP(priv, requestWithCookie(http.MethodGet, "/content?path=projects/2024/report.md", nil, cookie))
+	if priv.Code != http.StatusOK {
+		t.Fatalf("nested content status=%d", priv.Code)
+	}
+
+	// A share must exist and the public share endpoint must serve it.
+	var shareURL string
+	rows, err := a.db.Query(`SELECT rel_path, token_value FROM shares WHERE owner_id=?`, p.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var lp, tok string
+		if err := rows.Scan(&lp, &tok); err != nil {
+			t.Fatal(err)
+		}
+		if lp == "projects/2024/report.md" {
+			shareURL = "/s/" + tok
+		}
+	}
+	if shareURL == "" {
+		t.Fatal("no share created for nested folder file")
+	}
+	shareRec := httptest.NewRecorder()
+	public.ServeHTTP(shareRec, httptest.NewRequest(http.MethodGet, shareURL+"/", nil))
+	if shareRec.Code != http.StatusOK {
+		t.Fatalf("public share status=%d", shareRec.Code)
+	}
+}
+
+func TestSharedHTMLServesRelativeAsset(t *testing.T) {
+	a := newTestApp(t)
+	manage := a.managementHandler()
+	public := a.publicHandler()
+	cookie := loginAs(t, manage, "admin", testAdminPassword)
+	p, ok := a.authenticate(requestWithCookie(http.MethodGet, "/files", nil, cookie))
+	if !ok {
+		t.Fatal("not authenticated")
+	}
+
+	// Upload an HTML page and a sibling image referenced by relative URL.
+	htmlBody := `<!doctype html><h1>Site</h1><img src="logo.png">`
+	if got := uploadFileWithName(t, manage, cookie, p.CSRF, "site/index.html", htmlBody); got.Code != http.StatusSeeOther {
+		t.Fatalf("html upload status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := uploadFileWithName(t, manage, cookie, p.CSRF, "site/logo.png", "\x89PNG\r\n\x1a\n"); got.Code != http.StatusSeeOther {
+		t.Fatalf("image upload status=%d body=%s", got.Code, got.Body.String())
+	}
+
+	// The HTML share auto-created on upload must serve its relative asset.
+	var token string
+	if err := a.db.QueryRow(`SELECT token_value FROM shares WHERE owner_id=? AND rel_path='site/index.html'`, p.UserID).Scan(&token); err != nil {
+		t.Fatalf("no share for site/index.html: %v", err)
+	}
+	htmlRec := httptest.NewRecorder()
+	public.ServeHTTP(htmlRec, httptest.NewRequest(http.MethodGet, "/s/"+token+"/", nil))
+	if htmlRec.Code != http.StatusOK || !strings.Contains(htmlRec.Body.String(), "Site") {
+		t.Fatalf("shared html status=%d body=%s", htmlRec.Code, htmlRec.Body.String())
+	}
+	// Without the trailing slash the browser would resolve relative asset URLs
+	// against /s/ (losing the token), so the HTML share must redirect.
+	redir := httptest.NewRecorder()
+	public.ServeHTTP(redir, httptest.NewRequest(http.MethodGet, "/s/"+token, nil))
+	if redir.Code != http.StatusSeeOther || redir.Header().Get("Location") != "/s/"+token+"/" {
+		t.Fatalf("html share must redirect to trailing slash: %d %q", redir.Code, redir.Header().Get("Location"))
+	}
+	imgRec := httptest.NewRecorder()
+	public.ServeHTTP(imgRec, httptest.NewRequest(http.MethodGet, "/s/"+token+"/logo.png", nil))
+	if imgRec.Code != http.StatusOK || !strings.HasPrefix(imgRec.Header().Get("Content-Type"), "image/png") {
+		t.Fatalf("relative asset not served: status=%d type=%q", imgRec.Code, imgRec.Header().Get("Content-Type"))
+	}
+
+	// A non-html single-file share must not expose sibling assets.
+	var imgToken string
+	if err := a.db.QueryRow(`SELECT token_value FROM shares WHERE owner_id=? AND rel_path='site/logo.png'`, p.UserID).Scan(&imgToken); err != nil {
+		t.Fatalf("no share for site/logo.png: %v", err)
+	}
+	leak := httptest.NewRecorder()
+	public.ServeHTTP(leak, httptest.NewRequest(http.MethodGet, "/s/"+imgToken+"/index.html", nil))
+	if leak.Code != http.StatusNotFound {
+		t.Fatalf("non-html share must not expose siblings, status=%d", leak.Code)
 	}
 }

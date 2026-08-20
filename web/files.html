@@ -2,15 +2,16 @@
 <div id="file-workspace" class="workspace" data-csrf="{{.CSRF}}" data-username="{{.Username}}" data-role="{{.Role}}" data-initial-path="{{.CurrentPath}}" data-used="{{.Used}}" data-quota="{{.Quota}}">
   <aside id="workspace-sidebar" class="workspace-sidebar" aria-label="文件导航">
     <header class="sidebar-brand">
-      <a href="/files" aria-label="哈啰租车 PageRelay 首页"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><span>PageRelay</span></a>
+      <a href="/files" aria-label="PageRelay 首页"><img src="/assets/pagerelay-logo.svg" alt="PageRelay"></a>
       <button id="sidebar-close" class="quiet-icon mobile-only" type="button" aria-label="关闭文件导航">×</button>
     </header>
 
     <form id="upload-form" class="side-upload" method="post" action="/upload" enctype="multipart/form-data" tabindex="0" aria-label="上传文件">
       <input type="hidden" name="csrf" value="{{.CSRF}}"><input id="upload-path" type="hidden" name="path" value="{{.CurrentPath}}">
       <input id="file-input" type="file" name="files" multiple hidden>
+      <input id="folder-input" type="file" name="files" multiple webkitdirectory directory hidden>
       <span class="upload-symbol" aria-hidden="true">↑</span>
-      <span><strong>上传文件</strong><small>拖拽到这里，或点击选择</small></span>
+      <span><strong>上传文件</strong><small>拖拽到这里，或点击选择<small class="upload-folder-toggle">· 上传文件夹</small></small></span>
       <span class="upload-shortcut">U</span>
       <div class="upload-progress" hidden><i></i></div>
     </form>

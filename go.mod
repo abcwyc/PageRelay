@@ -1,4 +1,4 @@
-module company-filehub
+module github.com/abcwyc/PageRelay
 
 go 1.26
 

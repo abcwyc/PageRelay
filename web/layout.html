@@ -6,17 +6,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>{{.Data.Title}} · PageRelay</title>
-  <link rel="icon" type="image/png" sizes="64x64" href="/assets/rental-app-icon.png?v=1">
+  <link rel="icon" type="image/svg+xml" href="/assets/pagerelay-icon.svg?v=2">
   <link rel="stylesheet" href="/assets/app.css?v=6">
 </head>
 <body class="page-{{.View}}">
 {{if eq .View "login"}}{{template "login" .Data}}
+{{else if eq .View "change-password"}}{{template "change-password" .Data}}
 {{else if eq .View "public"}}{{template "public" .Data}}
 {{else if eq .View "files"}}{{template "files" .Data}}
 {{else}}
   <div class="legacy-shell">
     <aside class="legacy-sidebar">
-      <a class="brand-logo" href="/files"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>PageRelay</small></a>
+      <a class="brand-logo" href="/files"><img src="/assets/pagerelay-logo.svg" alt="PageRelay"></a>
       <nav>
         <a href="/files">文件工作台</a>
         <a class="{{if eq .Data.Page "shares"}}active{{end}}" href="/shares">分享记录</a>

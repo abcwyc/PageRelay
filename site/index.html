@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PageRelay — 把本地页面变成链接，发出去对方直接看</title>
+<meta name="description" content="你用 AI 生成了 HTML 或 Markdown，想让朋友直接看，可它要部署。PageRelay 让你把文件拖进去，拿到一条链接发出去——对方点开就看，不用下载、不用部署。单个 Go 二进制，自托管。">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23FFFFFF'/%3E%3Cpath d='M17 52V12h16.5C44 12 50 18 50 26.2S44 40.5 33.5 40.5H17' fill='none' stroke='%23173D33' stroke-width='5.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M33 34 50 52' fill='none' stroke='%23173D33' stroke-width='5.5' stroke-linecap='round'/%3E%3Ccircle cx='50' cy='52' r='3' fill='%23CF7659'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --paper:#ffffff; --paper-2:#F5F5F4; --surface:#F8F8F6;
+    --ink:#173D33; --ink-2:#2A3F38; --ink-soft:#5E716A; --ink-faint:#9CA69F;
+    --coral:#CF7659; --coral-soft:#E8A98F;
+    --line:#E6E4DE; --line-strong:#CFCBBF; --code-bg:#15281F;
+    --serif:"Iowan Old Style","Palatino Linotype","Hoefler Text",Georgia,"Songti SC","STSong",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--paper);color:var(--ink-2);font:16.5px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:3px}
+  a:hover{text-decoration-color:var(--coral)}
+  .wrap{max-width:720px;margin:0 auto;padding:0 28px}
+  code,pre{font-family:var(--mono)}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:saturate(140%) blur(8px);border-bottom:1px solid var(--line)}
+  .nav{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .brand{display:flex;align-items:center;text-decoration:none}
+  .brand svg{display:block;height:28px;width:auto}
+  .nav-r{display:flex;align-items:center;gap:20px;font-size:13.5px;color:var(--ink-soft)}
+  .nav-r a,.nav-r button{text-decoration:none;font-family:inherit}
+  .nav-r a:not(.nav-cta){border-bottom:1px solid transparent;transition:color .15s,border-color .15s}
+  .nav-r a:not(.nav-cta):hover{color:var(--ink);border-color:var(--line-strong)}
+  .lang-toggle{border:1px solid var(--line-strong);color:var(--ink-soft);padding:5px 10px;border-radius:7px;font-size:12px;font-weight:600;background:transparent;cursor:pointer;transition:color .15s,border-color .15s;font-family:var(--sans)}
+  .lang-toggle:hover{color:var(--ink);border-color:var(--ink)}
+  .nav-cta{display:inline-flex;align-items:center;gap:6px;border:1.5px solid var(--ink);color:var(--ink);padding:7px 15px;border-radius:8px;font-weight:600;font-size:13px;transition:background .15s,color .15s;border-color:var(--ink)}
+  .nav-cta:hover{background:var(--ink);color:var(--paper);text-decoration:none}
+  .nav-cta .arr{transition:transform .15s}
+  .nav-cta:hover .arr{transform:translateX(3px)}
+
+  /* ---------- hero ---------- */
+  .hero{padding:72px 0 56px;position:relative}
+  .hero h1{font-family:var(--serif);font-size:clamp(30px,5.2vw,50px);line-height:1.14;letter-spacing:-.02em;color:var(--ink);margin:0 0 26px;font-weight:500}
+  .hero h1 em{font-style:italic;color:var(--coral);font-weight:500}
+  .lede{font-size:18px;line-height:1.72;color:var(--ink-soft);margin:0 0 30px}
+  .lede strong{color:var(--ink);font-weight:600}
+  .cta-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:46px;padding:0 22px;border-radius:9px;font-weight:600;font-size:14.5px;text-decoration:none;transition:transform .12s,background .15s,color .15s;cursor:pointer;border:0}
+  .btn-primary{background:var(--ink);color:var(--paper)}
+  .btn-primary:hover{background:#0f2b23}
+  .btn-ghost{border:1.5px solid var(--line-strong);color:var(--ink);background:transparent}
+  .btn-ghost:hover{border-color:var(--ink);background:var(--surface)}
+  .btn .arr{transition:transform .15s}
+  .btn:hover .arr{transform:translateX(3px)}
+  .hero-note{margin-top:24px;font-size:13px;color:var(--ink-faint);display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .hero-note span+span::before{content:"·";margin-right:12px;color:var(--line-strong)}
+
+  /* ---------- body ---------- */
+  main{padding-bottom:30px}
+  section{padding:54px 0;border-top:1px solid var(--line);scroll-margin-top:74px}
+  h2{font-family:var(--serif);font-size:clamp(24px,3.2vw,30px);line-height:1.22;letter-spacing:-.012em;color:var(--ink);margin:0 0 20px;font-weight:500}
+  p{margin:0 0 18px}
+  p.lead{font-size:18px;color:var(--ink-2);margin-bottom:22px}
+  strong{color:var(--ink);font-weight:600}
+  .inline{background:var(--paper-2);padding:1px 6px;border-radius:4px;font-size:13.5px;color:var(--ink);font-family:var(--mono);white-space:nowrap}
+
+  .relay{font-family:var(--serif);font-size:clamp(20px,2.5vw,24px);line-height:1.5;color:var(--ink);margin:8px 0 26px}
+  .relay .step{white-space:nowrap}
+  .relay .arr{color:var(--coral);font-style:normal;margin:0 6px;font-family:var(--sans)}
+  .relay .out{color:var(--ink-soft)}
+
+  .chip{display:inline-flex;align-items:center;gap:9px;border:1px solid var(--line-strong);background:var(--surface);border-radius:9px;padding:9px 13px;font-size:14px;color:var(--ink);font-family:var(--mono);box-shadow:0 1px 0 var(--line)}
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--coral);flex:none}
+  .scene{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0 4px}
+  .scene .cap{font-size:13px;color:var(--ink-faint)}
+
+  .note{border-left:2px solid var(--coral);background:var(--paper-2);padding:14px 18px;border-radius:0 8px 8px 0;margin:24px 0;font-size:15px;color:var(--ink-2)}
+  .note small{display:block;margin-top:6px;color:var(--ink-faint);font-size:12.5px}
+
+  /* ---------- code ---------- */
+  .code-block{background:var(--code-bg);color:#DCE7E0;border-radius:10px;padding:18px 20px;overflow:auto;font-size:13px;line-height:1.7;margin:14px 0 18px}
+  .code-block .c{color:#6f9486}
+  .code-block .s{color:#B8D9A8}
+  .deploy p{margin-bottom:8px}
+  .deploy h3{font-family:var(--sans);font-size:14px;color:var(--ink);margin:26px 0 8px;font-weight:700}
+
+  /* ---------- demo ---------- */
+  .demo{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:30px 32px;margin-top:6px}
+  .demo h3{font-family:var(--serif);font-size:21px;margin:0 0 8px;color:var(--ink);font-weight:500}
+  .demo p{margin:0 0 14px;color:var(--ink-soft);font-size:14.5px}
+  .demo-creds{display:flex;gap:0;margin:14px 0;border:1px dashed var(--line-strong);border-radius:9px;overflow:hidden;font-size:13.5px;background:var(--paper)}
+  .demo-creds .row{flex:1;padding:11px 14px;border-right:1px solid var(--line)}
+  .demo-creds .row:last-child{border-right:0}
+  .demo-creds dt{color:var(--ink-faint);font-size:11px;margin-bottom:3px}
+  .demo-creds dd{margin:0;font-family:var(--mono);color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+  .demo-warn{margin:14px 0 0;font-size:12.5px;color:var(--coral);line-height:1.55}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--line);padding:36px 0 60px;color:var(--ink-faint);font-size:13px}
+  .foot{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+  .foot .brand{text-decoration:none}
+  .foot .brand svg{height:24px}
+  .foot-r{text-align:right;font-size:12.5px;line-height:1.6}
+
+  @media(max-width:680px){
+    .nav-r .nav-link{display:none}.nav-r{gap:10px}.brand svg{height:26px}
+    .cta-row .btn{width:100%;justify-content:center}
+    .demo-creds{flex-direction:column}.demo-creds .row{border-right:0;border-bottom:1px solid var(--line)}.demo-creds .row:last-child{border-bottom:0}
+    .foot-r{text-align:left}
+  }
+  @media(max-width:420px){.nav{height:54px}.wrap{padding:0 20px}}
+  @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important}}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="PageRelay">
+      <svg viewBox="0 0 328 64" role="img" aria-label="PageRelay">
+        <path d="M17 53V11h17c10.5 0 17 6.3 17 15.2S44.5 41.5 34 41.5H17" fill="none" stroke="#173D33" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M33.5 34.5 51 53" fill="none" stroke="#173D33" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="51" cy="53" r="3.2" fill="#CF7659"/>
+        <text x="78" y="43" fill="#18221E" font-family="'Avenir Next','Helvetica Neue',Arial,sans-serif" font-size="34" font-weight="500" letter-spacing="-1.7">Page<tspan font-weight="700">Relay</tspan></text>
+      </svg>
+    </a>
+    <div class="nav-r">
+      <a class="nav-link" href="#story" data-i18n="nav_what">这是什么</a>
+      <a class="nav-link" href="#deploy" data-i18n="nav_deploy">怎么部署</a>
+      <button class="lang-toggle" id="lang-toggle" type="button" aria-label="Switch language">EN</button>
+      <a href="#demo" class="nav-cta" aria-label="Go to demo">
+        <span data-i18n="nav_try">去体验</span>
+        <svg class="arr" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main id="top">
+
+<!-- ============ HERO ============ -->
+<section class="hero" style="border-top:0">
+  <div class="wrap">
+    <h1 data-i18n-html="hero_h1">AI 生成的页面，<em>不用部署</em>也能分享出去。</h1>
+    <p class="lede" data-i18n-html="hero_lede">
+      你用 AI 生成了一份 HTML 或 Markdown，想让朋友直接看。可它要部署——找服务器、配域名，比写它还麻烦。把文件拖进 PageRelay，拿到一条链接发出去，对方点开就看，<strong>不下载、不装环境</strong>。
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary" href="#demo">
+        <span data-i18n="hero_btn_demo">试一下 Demo</span>
+        <svg class="arr" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>
+      </a>
+      <a class="btn btn-ghost" href="#deploy"><span data-i18n="hero_btn_deploy">自己部署</span></a>
+    </div>
+    <div class="hero-note">
+      <span data-i18n="hero_note1">单个 Go 二进制</span><span data-i18n="hero_note2">SQLite + 本地磁盘</span><span data-i18n="hero_note3">自托管</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 故事 / 价值 ============ -->
+<section id="story">
+  <div class="wrap">
+    <h2 data-i18n="story_h2">一件每天都会发生的小事</h2>
+
+    <p class="lead" data-i18n-html="story_lead">
+      下班前，你用 AI 生成了一份带交互的产品演示页，或者一篇配图齐全的 Markdown 笔记。想发给同事、发给客户、发到群里让人看一眼——然后你卡住了。
+    </p>
+
+    <p data-i18n-html="story_p1">
+      <strong>发文件过去，对方要下载。</strong>微信里发个 HTML，对方打开是乱码；发个 MD，对方连 Markdown 是什么都不知道。你还得附一段"用浏览器打开"的说明，像在给人写小抄。
+    </p>
+
+    <p data-i18n-html="story_p2">
+      <strong>丢到网盘，数据就出了公司。</strong>合规那关过不去。网盘的分享链接又臭又长，过期了、改了权限，你都不知道。
+    </p>
+
+    <p data-i18n-html="story_p3">
+      <strong>自己搭静态托管，要一台服务器。</strong>申请机器、装 Nginx、配域名、传文件、设权限——比写那个页面还久。就为发一眼。
+    </p>
+
+    <p data-i18n-html="story_p4">
+      这三件事，每件单独都不算大事，但每天来一遍，磨人。PageRelay 就是替你把这三件事压成一个动作。
+    </p>
+
+    <p class="relay">
+      <span class="step" data-i18n="relay_s1">本地文件</span><span class="arr">→</span><span class="step" data-i18n="relay_s2">拖进来</span><span class="arr">→</span><span class="step" data-i18n="relay_s3">一条链接</span><span class="arr">→</span><span class="out" data-i18n="relay_s4">对方直接看</span>
+    </p>
+
+    <div class="scene">
+      <span class="chip"><span class="dot"></span>share.你的域名.com/s/k7Hm</span>
+      <span class="cap" data-i18n="scene_cap">把这条发给谁都行，不下载、不装环境。</span>
+    </div>
+
+    <div class="note">
+      <span data-i18n-html="note_main">不想发了，把分享开关关掉，这条链接当场失效；再开，会生成新的一条。发出去的东西，你随时收得回。</span>
+      <small data-i18n-html="note_sub">HTML 在独立的公开域里跑，沙箱隔离，不会动到你管理端的会话；Markdown 走安全渲染，剥掉危险节点。</small>
+    </div>
+
+    <p data-i18n-html="story_p5">
+      它不替你存几 TB 的素材库，也不跟对象存储比。它只覆盖这一类"传一眼就完事"的场景——但这类场景，每天都在发生。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 部署 ============ -->
+<section id="deploy" class="deploy">
+  <div class="wrap">
+    <h2 data-i18n="deploy_h2">怎么把它跑起来</h2>
+    <p data-i18n="deploy_p">一个二进制 + 一个 SQLite 文件 + 一个磁盘目录，丢到任意 Linux 机器上就能跑，没有外部依赖。</p>
+
+    <h3 data-i18n="deploy_h_build">构建</h3>
+<pre class="code-block"><span class="c" data-i18n="code_build_c"># 需要 Go 1.26+；静态编译，目标机无需 libc</span>
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -trimpath -ldflags=<span class="s">'-s -w'</span> -o filehub .</pre>
+
+    <h3 data-i18n="deploy_h_run">跑起来</h3>
+<pre class="code-block"><span class="c" data-i18n="code_run_c"># 管理端 :8080，公开分享端 :8081</span>
+./filehub \
+  -listen <span class="s">0.0.0.0:8080</span> \
+  -share-listen <span class="s">0.0.0.0:8081</span> \
+  -public-base <span class="s">https://share.你的域名.com</span> \
+  -db /var/lib/filehub/filehub.db \
+  -data /srv/filehub/users</pre>
+    <p data-i18n-html="deploy_p_admin">首次启动自动建管理员 <span class="inline">admin</span>，日志会提醒你首次登录后改密。更稳妥的是用 <span class="inline">-admin-password-file</span> 指定初始密码，写入后删掉那个文件。</p>
+
+    <h3 data-i18n="deploy_h_systemd">用 systemd 守住</h3>
+<pre class="code-block"><span class="c" data-i18n="code_systemd_c"># /etc/systemd/system/filehub.service</span>
+[Service]
+Type=simple
+User=filehub
+ExecStart=/usr/local/bin/filehub \
+  -listen <span class="s">0.0.0.0:8080</span> \
+  -share-listen <span class="s">0.0.0.0:8081</span> \
+  -public-base <span class="s">https://share.你的域名.com</span> \
+  -cookie-secure
+Restart=on-failure</pre>
+<pre class="code-block">sudo systemctl daemon-reload
+sudo systemctl enable --now filehub</pre>
+
+    <h3 data-i18n="deploy_h_proxy">反向代理 + TLS</h3>
+    <p data-i18n-html="deploy_p_proxy">用 Nginx 或 Caddy 把管理端、公开端分别绑到不同域名，开 HTTPS。开了 HTTPS 就记得加 <span class="inline">-cookie-secure</span>。</p>
+<pre class="code-block"><span class="c" data-i18n="code_proxy_c1"># relay.你的域名.com  → 127.0.0.1:8080  （管理端）</span>
+<span class="c" data-i18n="code_proxy_c2"># share.你的域名.com  → 127.0.0.1:8081  （公开分享端）</span>
+location / { proxy_pass http://127.0.0.1:8080; }
+client_max_body_size <span class="s">2g</span>;   <span class="c" data-i18n="code_proxy_c3"># 与上传上限对齐</span></pre>
+
+    <p style="margin-top:18px" data-i18n-html="deploy_p_params">完整参数（<span class="inline">-listen</span> / <span class="inline">-share-listen</span> / <span class="inline">-public-base</span> / <span class="inline">-admin-password-file</span> / <span class="inline">-cookie-secure</span>）见仓库的 README。</p>
+  </div>
+</section>
+
+<!-- ============ Demo ============ -->
+<section id="demo">
+  <div class="wrap">
+    <h2 data-i18n="demo_h2">先试，再决定要不要部署</h2>
+    <p class="lead" data-i18n="demo_lead">一个只读体验账号，数据定期重置。传个小文件、开个分享、把链接贴到隐身窗口，整套流程就走完了。</p>
+
+    <div class="demo">
+      <h3 data-i18n="demo_h3">在线 Demo</h3>
+      <p data-i18n="demo_p">登录后能体验拖拽上传、预览、分享开关，把公开链接贴到隐身窗口，能看到内外两端是怎么隔离的。</p>
+      <div class="demo-creds">
+        <div class="row"><dt data-i18n="demo_l_addr">地址</dt><dd>pagerelay.348580.xyz</dd></div>
+        <div class="row"><dt data-i18n="demo_l_user">账号</dt><dd>demo</dd></div>
+        <div class="row"><dt data-i18n="demo_l_pass">密码</dt><dd>1234567890</dd></div>
+      </div>
+      <p class="demo-warn" data-i18n="demo_warn">这是个公开环境，别上传真实或敏感的文件。</p>
+      <a class="btn btn-primary" href="/login" style="margin-top:6px">
+        <span data-i18n="demo_btn">打开 Demo</span>
+        <svg class="arr" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg>
+      </a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 328 64" role="img" aria-label="PageRelay">
+        <path d="M17 53V11h17c10.5 0 17 6.3 17 15.2S44.5 41.5 34 41.5H17" fill="none" stroke="#173D33" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M33.5 34.5 51 53" fill="none" stroke="#173D33" stroke-width="6" stroke-linecap="round"/>
+        <circle cx="51" cy="53" r="3.2" fill="#CF7659"/>
+        <text x="78" y="43" fill="#18221E" font-family="'Avenir Next','Helvetica Neue',Arial,sans-serif" font-size="34" font-weight="500" letter-spacing="-1.7">Page<tspan font-weight="700">Relay</tspan></text>
+      </svg>
+    </a>
+    <div class="foot-r" data-i18n="foot_r">单 Go 二进制 · SQLite · 自托管</div>
+  </div>
+</footer>
+
+<script>
+  const I18N = {
+    zh: {
+      title:"PageRelay — 把本地页面变成链接，发出去对方直接看",
+      nav_what:"这是什么", nav_deploy:"怎么部署", nav_try:"去体验",
+      hero_h1:'AI 生成的页面，<em>不用部署</em>也能分享出去。',
+      hero_lede:'你用 AI 生成了一份 HTML 或 Markdown，想让朋友直接看。可它要部署——找服务器、配域名，比写它还麻烦。把文件拖进 PageRelay，拿到一条链接发出去，对方点开就看，<strong>不下载、不装环境</strong>。',
+      hero_btn_demo:"试一下 Demo", hero_btn_deploy:"自己部署",
+      hero_note1:"单个 Go 二进制", hero_note2:"SQLite + 本地磁盘", hero_note3:"自托管",
+      story_h2:"一件每天都会发生的小事",
+      story_lead:'下班前，你用 AI 生成了一份带交互的产品演示页，或者一篇配图齐全的 Markdown 笔记。想发给同事、发给客户、发到群里让人看一眼——然后你卡住了。',
+      story_p1:'<strong>发文件过去，对方要下载。</strong>微信里发个 HTML，对方打开是乱码；发个 MD，对方连 Markdown 是什么都不知道。你还得附一段"用浏览器打开"的说明，像在给人写小抄。',
+      story_p2:'<strong>丢到网盘，数据就出了公司。</strong>合规那关过不去。网盘的分享链接又臭又长，过期了、改了权限，你都不知道。',
+      story_p3:'<strong>自己搭静态托管，要一台服务器。</strong>申请机器、装 Nginx、配域名、传文件、设权限——比写那个页面还久。就为发一眼。',
+      story_p4:'这三件事，每件单独都不算大事，但每天来一遍，磨人。PageRelay 就是替你把这三件事压成一个动作。',
+      relay_s1:"本地文件", relay_s2:"拖进来", relay_s3:"一条链接", relay_s4:"对方直接看",
+      scene_cap:"把这条发给谁都行，不下载、不装环境。",
+      note_main:'不想发了，把分享开关关掉，这条链接当场失效；再开，会生成新的一条。发出去的东西，你随时收得回。',
+      note_sub:'HTML 在独立的公开域里跑，沙箱隔离，不会动到你管理端的会话；Markdown 走安全渲染，剥掉危险节点。',
+      story_p5:'它不替你存几 TB 的素材库，也不跟对象存储比。它只覆盖这一类"传一眼就完事"的场景——但这类场景，每天都在发生。',
+      deploy_h2:"怎么把它跑起来",
+      deploy_p:"一个二进制 + 一个 SQLite 文件 + 一个磁盘目录，丢到任意 Linux 机器上就能跑，没有外部依赖。",
+      deploy_h_build:"构建",
+      code_build_c:"# 需要 Go 1.26+；静态编译，目标机无需 libc",
+      deploy_h_run:"跑起来",
+      code_run_c:"# 管理端 :8080，公开分享端 :8081",
+      deploy_p_admin:'首次启动自动建管理员 <span class="inline">admin</span>，日志会提醒你首次登录后改密。更稳妥的是用 <span class="inline">-admin-password-file</span> 指定初始密码，写入后删掉那个文件。',
+      deploy_h_systemd:"用 systemd 守住",
+      code_systemd_c:"# /etc/systemd/system/filehub.service",
+      deploy_h_proxy:"反向代理 + TLS",
+      deploy_p_proxy:'用 Nginx 或 Caddy 把管理端、公开端分别绑到不同域名，开 HTTPS。开了 HTTPS 就记得加 <span class="inline">-cookie-secure</span>。',
+      code_proxy_c1:"# relay.你的域名.com  → 127.0.0.1:8080  （管理端）",
+      code_proxy_c2:"# share.你的域名.com  → 127.0.0.1:8081  （公开分享端）",
+      code_proxy_c3:"# 与上传上限对齐",
+      deploy_p_params:'完整参数（<span class="inline">-listen</span> / <span class="inline">-share-listen</span> / <span class="inline">-public-base</span> / <span class="inline">-admin-password-file</span> / <span class="inline">-cookie-secure</span>）见仓库的 README。',
+      demo_h2:"先试，再决定要不要部署",
+      demo_lead:"一个只读体验账号，数据定期重置。传个小文件、开个分享、把链接贴到隐身窗口，整套流程就走完了。",
+      demo_h3:"在线 Demo",
+      demo_p:"登录后能体验拖拽上传、预览、分享开关，把公开链接贴到隐身窗口，能看到内外两端是怎么隔离的。",
+      demo_l_addr:"地址", demo_l_user:"账号", demo_l_pass:"密码",
+      demo_warn:"这是个公开环境，别上传真实或敏感的文件。",
+      demo_btn:"打开 Demo",
+      foot_r:"单 Go 二进制 · SQLite · 自托管"
+    },
+    en: {
+      title:"PageRelay — Turn a local page into a link they can just open",
+      nav_what:"What it is", nav_deploy:"Deploy", nav_try:"Try it",
+      hero_h1:'Share AI-made pages with a link — <em>no deploy</em> needed.',
+      hero_lede:'You generate an HTML page or a Markdown doc with AI and want to show someone. But it has to be deployed — find a server, set up a domain, more work than writing it. Drag the file into PageRelay, get a link, send it. They open it in the browser — <strong>no download, no setup</strong>.',
+      hero_btn_demo:"Try the demo", hero_btn_deploy:"Deploy it yourself",
+      hero_note1:"Single Go binary", hero_note2:"SQLite + local disk", hero_note3:"Self-hosted",
+      story_h2:"A small thing that happens every day",
+      story_lead:'End of the day. You used AI to make an interactive product demo, or a Markdown note with images. You want to send it to a colleague, a client, or a group chat for a quick look — and then you get stuck.',
+      story_p1:'<strong>Send the file, and they have to download it.</strong> An HTML sent through chat opens as garbled text; an MD file, and they don\'t even know what Markdown is. You end up writing a little "open in browser" note, like handing someone a cheat sheet.',
+      story_p2:'<strong>Drop it on a cloud drive, and your data leaves the company.</strong> Compliance won\'t allow it. The share links are long and ugly, and you never know when they expire or get their permissions changed.',
+      story_p3:'<strong>Set up static hosting yourself, and you need a server.</strong> Request a machine, install Nginx, configure a domain, upload files, set permissions — longer than writing the page. Just to show it for a second.',
+      story_p4:'None of these is a big deal on its own. But they happen every day, and that wears you down. PageRelay collapses all three into one move.',
+      relay_s1:"Local file", relay_s2:"drag it in", relay_s3:"a link", relay_s4:"they view it",
+      scene_cap:"Send it to anyone — no download, no setup.",
+      note_main:'Don\'t want it out there anymore? Turn the share switch off and the link dies instantly; turn it back on and you get a fresh one. What you send out, you can always take back.',
+      note_sub:'HTML runs on a separate public domain, sandboxed away from your admin session; Markdown is rendered in safe mode, with dangerous nodes stripped.',
+      story_p5:'It won\'t store your terabyte asset library, and it doesn\'t compete with object storage. It only covers the "just show it for a second" case — but that case happens every day.',
+      deploy_h2:"How to run it",
+      deploy_p:"One binary + one SQLite file + one disk directory. Drop it on any Linux machine and it runs — no external dependencies.",
+      deploy_h_build:"Build",
+      code_build_c:"# needs Go 1.26+; static build, no libc on the target",
+      deploy_h_run:"Run it",
+      code_run_c:"# admin on :8080, public share on :8081",
+      deploy_p_admin:'On first start it creates an <span class="inline">admin</span> user and logs a reminder to change the password after first login. Safer: pass the initial password with <span class="inline">-admin-password-file</span> and delete the file once it\'s been written in.',
+      deploy_h_systemd:"Keep it running with systemd",
+      code_systemd_c:"# /etc/systemd/system/filehub.service",
+      deploy_h_proxy:"Reverse proxy + TLS",
+      deploy_p_proxy:'Use Nginx or Caddy to bind the admin and public sides to separate domains and enable HTTPS. Once HTTPS is on, remember to add <span class="inline">-cookie-secure</span>.',
+      code_proxy_c1:"# relay.example.com  → 127.0.0.1:8080  (admin)",
+      code_proxy_c2:"# share.example.com  → 127.0.0.1:8081  (public share)",
+      code_proxy_c3:"# match the upload limit",
+      deploy_p_params:'Full options (<span class="inline">-listen</span>, <span class="inline">-share-listen</span>, <span class="inline">-public-base</span>, <span class="inline">-admin-password-file</span>, <span class="inline">-cookie-secure</span>) are in the repo\'s README.',
+      demo_h2:"Try it before you deploy",
+      demo_lead:"A read-only demo account; data gets reset periodically. Upload a small file, turn on sharing, paste the link into an incognito window — that's the whole loop.",
+      demo_h3:"Live demo",
+      demo_p:"After logging in you can try drag-to-upload, preview, and the share switch. Paste the public link into an incognito window to see how the two sides are isolated.",
+      demo_l_addr:"URL", demo_l_user:"Account", demo_l_pass:"Password",
+      demo_warn:"This is a public environment — don't upload anything real or sensitive.",
+      demo_btn:"Open demo",
+      foot_r:"Single Go binary · SQLite · self-hosted"
+    }
+  };
+
+  function applyLang(lang){
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+    const dict = I18N[lang];
+    document.querySelectorAll('[data-i18n]').forEach(el=>{
+      const k = el.getAttribute('data-i18n'); const v = dict[k];
+      if(v != null) el.textContent = v;
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(el=>{
+      const k = el.getAttribute('data-i18n-html'); const v = dict[k];
+      if(v != null) el.innerHTML = v;
+    });
+    document.title = dict.title;
+    const t = document.getElementById('lang-toggle');
+    if(t) t.textContent = lang === 'zh' ? 'EN' : '中';
+    try{ localStorage.setItem('prlang', lang); }catch(e){}
+  }
+
+  let curLang = 'zh';
+  try { const saved = localStorage.getItem('prlang'); if(saved === 'en' || saved === 'zh') curLang = saved; else curLang = (navigator.language || 'zh').toLowerCase().startsWith('zh') ? 'zh' : 'en'; } catch(e){}
+  applyLang(curLang);
+
+  document.getElementById('lang-toggle').addEventListener('click', ()=>{
+    curLang = curLang === 'zh' ? 'en' : 'zh';
+    applyLang(curLang);
+    // re-run scroll offset in case nav height changed
+  });
+
+  // Smooth-scroll for in-page anchors, offset by sticky nav.
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const navH = () => document.querySelector('nav').getBoundingClientRect().height;
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener('click', e => {
+      const id = a.getAttribute('href');
+      if(id.length < 2) return;
+      const el = document.querySelector(id);
+      if(!el) return;
+      e.preventDefault();
+      const y = el.getBoundingClientRect().top + window.scrollY - navH() - 6;
+      window.scrollTo({ top: y, behavior: reduce ? 'auto' : 'smooth' });
+      history.replaceState(null, '', id);
+    });
+  });
+</script>
+
+</body>
+</html>

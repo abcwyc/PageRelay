@@ -764,11 +764,18 @@
       elements.uploadOverlay.hidden = true;
       elements.main.classList.remove('upload-drop-active');
     };
-    form.addEventListener('click', event => { if (event.target.tagName !== 'INPUT') input.click(); });
+    const folderInput = qs('#folder-input');
+    const folderToggle = qs('.upload-folder-toggle');
+    form.addEventListener('click', event => {
+      if (event.target === folderToggle) { event.preventDefault(); event.stopPropagation(); folderInput && folderInput.click(); return; }
+      if (event.target.tagName !== 'INPUT') input.click();
+    });
     form.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
+    if (folderInput) folderInput.addEventListener('change', () => upload(inputToFileItems(folderInput.files)));
     ['dragenter', 'dragover'].forEach(type => form.addEventListener(type, event => { event.preventDefault(); if (state.dragPaths.length) { event.dataTransfer.dropEffect = 'none'; return; } form.classList.add('dragging'); }));
     ['dragleave', 'drop'].forEach(type => form.addEventListener(type, event => { event.preventDefault(); form.classList.remove('dragging'); }));
-    form.addEventListener('drop', event => { if (!state.dragPaths.length) upload(event.dataTransfer.files); }); input.addEventListener('change', () => upload(input.files));
+    form.addEventListener('drop', event => { if (state.dragPaths.length) return; event.preventDefault(); uploadFilesFromDataTransfer(event.dataTransfer); });
+    input.addEventListener('change', () => upload(inputToFileItems(input.files)));
     elements.main.addEventListener('dragenter', event => {
       if (!carriesExternalFiles(event)) return;
       event.preventDefault();
@@ -790,22 +797,61 @@
       if (!carriesExternalFiles(event)) return;
       event.preventDefault();
       event.stopPropagation();
-      const files = event.dataTransfer.files;
       hideMainDropTarget();
-      upload(files);
+      uploadFilesFromDataTransfer(event.dataTransfer);
     });
     window.addEventListener('blur', hideMainDropTarget);
-    async function upload(files) {
-      if (!files?.length) return;
-      const duplicates = [...files].filter(file => state.items.some(item => item.type === 'file' && item.name === file.name));
-      if (duplicates.length && !await confirmAction('覆盖同名文件？', `${duplicates.map(file => file.name).slice(0, 3).join('、')}${duplicates.length > 3 ? ` 等 ${duplicates.length} 个文件` : ''} 已存在。继续上传会替换原文件。`, '继续上传')) return;
-      const data = new FormData(); data.append('csrf', config.csrf); data.append('path', state.currentDir); [...files].forEach(file => data.append('files', file));
-      queue.hidden = false; queue.textContent = `正在上传 ${files.length} 个文件…`; progress.hidden = false; bar.style.width = '0%'; input.value = '';
+    async function uploadFilesFromDataTransfer(dt) {
+      // Prefer the entry API so dropped folders keep their structure.
+      const items = [...(dt.items || [])];
+      if (items.length && items[0].webkitGetAsEntry) {
+        const collected = [];
+        for (const item of items) {
+          const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+          if (entry) collected.push(...await traverseEntry(entry));
+          else { const f = item.getAsFile && item.getAsFile(); if (f) collected.push({ file: f, relPath: f.name }); }
+        }
+        if (collected.length) return upload(collected);
+      }
+      upload(inputToFileItems(dt.files));
+    }
+    function inputToFileItems(fileList) {
+      return [...fileList].map(file => ({ file, relPath: file.webkitRelativePath || file.name }));
+    }
+    function readEntries(reader) {
+      return new Promise((resolve, reject) => {
+        const all = [];
+        const step = () => reader.readEntries(entries => {
+          if (!entries.length) { resolve(all); return; }
+          all.push(...entries); step();
+        }, reject);
+        step();
+      });
+    }
+    async function traverseEntry(entry, prefix = '') {
+      const results = [];
+      if (entry.isFile) {
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        results.push({ file, relPath: (prefix ? prefix + '/' : '') + entry.name });
+      } else if (entry.isDirectory) {
+        const next = (prefix ? prefix + '/' : '') + entry.name;
+        const children = await readEntries(entry.createReader());
+        for (const child of children) results.push(...await traverseEntry(child, next));
+      }
+      return results;
+    }
+    async function upload(items) {
+      if (!items?.length) return;
+      const duplicates = items.filter(({ relPath }) => !relPath.includes('/') && state.items.some(item => item.type === 'file' && item.name === relPath));
+      if (duplicates.length && !await confirmAction('覆盖同名文件？', `${duplicates.map(({ relPath }) => relPath).slice(0, 3).join('、')}${duplicates.length > 3 ? ` 等 ${duplicates.length} 个文件` : ''} 已存在。继续上传会替换原文件。`, '继续上传')) return;
+      const data = new FormData(); data.append('csrf', config.csrf); data.append('path', state.currentDir); items.forEach(({ file, relPath }) => { data.append('paths', relPath); data.append('files', file); });
+      const count = items.length; const hasFolder = items.some(({ relPath }) => relPath.includes('/'));
+      queue.hidden = false; queue.textContent = `正在上传 ${count} 个文件${hasFolder ? '（含文件夹）' : ''}…`; progress.hidden = false; bar.style.width = '0%'; input.value = ''; if (folderInput) folderInput.value = '';
       const xhr = new XMLHttpRequest(); xhr.open('POST', '/upload'); xhr.setRequestHeader('Accept', 'application/json');
-      xhr.upload.onprogress = event => { if (event.lengthComputable) { const value = Math.round(event.loaded / event.total * 100); bar.style.width = `${value}%`; queue.textContent = `正在上传 ${files.length} 个文件 · ${value}%`; } };
+      xhr.upload.onprogress = event => { if (event.lengthComputable) { const value = Math.round(event.loaded / event.total * 100); bar.style.width = `${value}%`; queue.textContent = `正在上传 ${count} 个文件${hasFolder ? '（含文件夹）' : ''} · ${value}%`; } };
       xhr.onload = async () => {
         progress.hidden = true;
-        if (xhr.status >= 200 && xhr.status < 300) { queue.textContent = `${files.length} 个文件上传完成`; toast('上传完成，分享已默认开启'); await refreshWorkspace(); setTimeout(() => { queue.hidden = true; }, 2200); }
+        if (xhr.status >= 200 && xhr.status < 300) { queue.textContent = `${count} 个文件上传完成`; toast('上传完成，分享已默认开启'); await refreshWorkspace(); setTimeout(() => { queue.hidden = true; }, 2200); }
         else { queue.textContent = '上传失败'; toast(readXHRError(xhr), true); }
       };
       xhr.onerror = () => { progress.hidden = true; queue.textContent = '上传失败'; toast('网络错误，上传失败', true); }; xhr.send(data);

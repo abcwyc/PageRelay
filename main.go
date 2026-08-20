@@ -41,8 +41,8 @@ const (
 )
 
 type config struct {
-	listen, shareListen, publicBase, dbPath, dataDir, adminUser, adminPassword, adminPasswordFile string
-	cookieSecure                                                                                  bool
+	listen, shareListen, publicBase, managementBase, dbPath, dataDir, adminUser, adminPassword, adminPasswordFile string
+	cookieSecure                                                                                                     bool
 }
 
 type app struct {
@@ -63,11 +63,12 @@ type user struct {
 }
 
 type principal struct {
-	UserID   int64
-	Username string
-	Role     string
-	CSRF     string
-	Expires  time.Time
+	UserID             int64
+	Username           string
+	Role               string
+	CSRF               string
+	Expires            time.Time
+	MustChangePassword bool
 }
 
 type share struct {
@@ -102,6 +103,7 @@ func main() {
 	flag.StringVar(&cfg.listen, "listen", "127.0.0.1:8080", "management listener")
 	flag.StringVar(&cfg.shareListen, "share-listen", "127.0.0.1:8081", "public share listener")
 	flag.StringVar(&cfg.publicBase, "public-base", "", "public share base URL, for example http://10.0.0.2:8081")
+	flag.StringVar(&cfg.managementBase, "management-base", "", "management base URL used for preview iframes, for example http://10.0.0.2:8080")
 	flag.StringVar(&cfg.dbPath, "db", "./filehub.db", "SQLite database")
 	flag.StringVar(&cfg.dataDir, "data", "./data", "file storage root")
 	flag.StringVar(&cfg.adminUser, "admin-user", "admin", "bootstrap administrator username")
@@ -166,9 +168,11 @@ func (a *app) managementHandler() http.Handler {
 	manage.HandleFunc("/health", a.health)
 	manage.HandleFunc("/login", a.login)
 	manage.HandleFunc("/logout", a.logout)
+	manage.HandleFunc("/change-password", a.requireAuth(a.changePassword))
 	manage.HandleFunc("/", a.requireAuth(a.dashboard))
 	manage.HandleFunc("/files", a.requireAuth(a.files))
 	manage.HandleFunc("/content", a.requireAuth(a.content))
+	manage.HandleFunc("/p/", a.publicPreview)
 	manage.HandleFunc("/api/list", a.requireAuth(a.apiList))
 	manage.HandleFunc("/api/item", a.requireAuth(a.apiItem))
 	manage.HandleFunc("/api/share", a.requireAuth(a.apiShare))
@@ -225,7 +229,7 @@ func staticAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
-	if name != "app.css" && name != "app.js" && name != "hello-rental-logo.png" && name != "rental-app-icon.png" && name != "mermaid.min.js" {
+	if name != "app.css" && name != "app.js" && name != "pagerelay-logo.svg" && name != "pagerelay-icon.svg" && name != "mermaid.min.js" {
 		http.NotFound(w, r)
 		return
 	}
@@ -236,8 +240,8 @@ func staticAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(name, ".css") {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	} else if strings.HasSuffix(name, ".png") {
-		w.Header().Set("Content-Type", "image/png")
+	} else if strings.HasSuffix(name, ".svg") {
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
 	} else {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 	}
@@ -266,8 +270,35 @@ func (a *app) migrate() error {
 	_, _ = a.db.Exec(`DELETE FROM preview_tokens WHERE expires_at < datetime('now')`)
 	// PageRelay 2.0 uses a simple enabled/disabled share state. Keep every
 	// previously active link valid and leave revoked links revoked.
+	if err := addColumnIfMissing(a.db, `users`, `must_change_password`, `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
 	_, _ = a.db.Exec(`UPDATE shares SET expires_at=NULL WHERE active=1`)
 	_, _ = a.db.Exec(`PRAGMA optimize`)
+	return nil
+}
+
+func addColumnIfMissing(db *sql.DB, table, column, decl string) error {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, decl)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -287,18 +318,22 @@ func (a *app) bootstrapAdmin() error {
 		}
 		password = strings.TrimRight(string(contents), "\r\n")
 	}
+	mustChange := 0
 	if password == "" {
-		password = randomToken(18)
-		log.Printf("BOOTSTRAP ADMIN PASSWORD (shown once): %s", password)
-	}
-	if len(password) < 10 {
+		// Fixed default credentials; the administrator must set a real password
+		// on first login. Discoverable for novice operators deploying from
+		// source without passing a password flag.
+		password = "admin"
+		mustChange = 1
+		log.Printf("BOOTSTRAP ADMIN: default credentials %s/admin — you must set a new password on first login", a.cfg.adminUser)
+	} else if len(password) < 10 {
 		return errors.New("bootstrap administrator password must contain at least 10 characters")
 	}
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
-	res, err := a.db.Exec(`INSERT INTO users(username,password_hash,role,quota_bytes) VALUES(?,?, 'admin', ?)`, a.cfg.adminUser, hash, int64(100<<30))
+	res, err := a.db.Exec(`INSERT INTO users(username,password_hash,role,quota_bytes,must_change_password) VALUES(?,?,'admin',?,?)`, a.cfg.adminUser, hash, int64(100<<30), mustChange)
 	if err != nil {
 		return err
 	}
@@ -327,8 +362,8 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	}
 	var u user
 	var hash string
-	var disabled int
-	err := a.db.QueryRow(`SELECT id,username,password_hash,role,quota_bytes,disabled,created_at FROM users WHERE username=?`, strings.TrimSpace(r.FormValue("username"))).Scan(&u.ID, &u.Username, &hash, &u.Role, &u.Quota, &disabled, &u.CreatedAt)
+	var disabled, mustChange int
+	err := a.db.QueryRow(`SELECT id,username,password_hash,role,quota_bytes,disabled,must_change_password,created_at FROM users WHERE username=?`, strings.TrimSpace(r.FormValue("username"))).Scan(&u.ID, &u.Username, &hash, &u.Role, &u.Quota, &disabled, &mustChange, &u.CreatedAt)
 	if err != nil || disabled != 0 || !verifyPassword(hash, r.FormValue("password")) {
 		a.audit(0, "login_failed", strings.TrimSpace(r.FormValue("username")), clientIP(r))
 		time.Sleep(350 * time.Millisecond)
@@ -343,6 +378,10 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: "filehub_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.cfg.cookieSecure, Expires: expires})
 	a.audit(u.ID, "login", "", clientIP(r))
+	if mustChange == 1 {
+		http.Redirect(w, r, "/change-password", http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
 }
 
@@ -382,6 +421,80 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
+func (a *app) changePassword(w http.ResponseWriter, r *http.Request, p principal) {
+	if r.Method == http.MethodGet {
+		data := changePasswordPageData(r)
+		data.CSRF = p.CSRF
+		a.render(w, "change-password", data)
+		return
+	}
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		badRequest(w, "请求无效")
+		return
+	}
+	if !a.checkCSRF(r, p) {
+		badRequest(w, "请求已过期")
+		return
+	}
+	var hash string
+	if err := a.db.QueryRow(`SELECT password_hash FROM users WHERE id=?`, p.UserID).Scan(&hash); err != nil {
+		serverError(w, err)
+		return
+	}
+	if !verifyPassword(hash, r.FormValue("current")) {
+		a.renderStatus(w, http.StatusUnauthorized, "change-password", changePasswordPageDataWithError(r, "当前密码不正确", p.CSRF))
+		return
+	}
+	newPass := r.FormValue("new")
+	if len(newPass) < 10 {
+		a.renderStatus(w, http.StatusBadRequest, "change-password", changePasswordPageDataWithError(r, "新密码至少 10 位", p.CSRF))
+		return
+	}
+	if newPass != r.FormValue("confirm") {
+		a.renderStatus(w, http.StatusBadRequest, "change-password", changePasswordPageDataWithError(r, "两次输入的新密码不一致", p.CSRF))
+		return
+	}
+	newHash, err := hashPassword(newPass)
+	if err != nil {
+		serverError(w, err)
+		return
+	}
+	if _, err := a.db.Exec(`UPDATE users SET password_hash=?,must_change_password=0 WHERE id=?`, newHash, p.UserID); err != nil {
+		serverError(w, err)
+		return
+	}
+	// Drop every other session so the new password takes effect elsewhere;
+	// the current session (a fresh one issued at login) stays.
+	if c, err := r.Cookie("filehub_session"); err == nil {
+		_, _ = a.db.Exec(`DELETE FROM sessions WHERE user_id=? AND token_hash!=?`, p.UserID, tokenHash(c.Value))
+	}
+	p.MustChangePassword = false
+	a.audit(p.UserID, "password_change", "", clientIP(r))
+	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func changePasswordPageData(r *http.Request) pageData {
+	data := pageData{Title: "设置密码", Page: "change-password", Lang: "zh-CN", Slogan: "首次登录，请设置新密码后继续。"}
+	primaryLanguage := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Accept-Language"), ",")[0]))
+	if strings.HasPrefix(primaryLanguage, "en") {
+		data.Title = "Set password"
+		data.Lang = "en"
+		data.Slogan = "Set a new password to continue."
+	}
+	return data
+}
+
+func changePasswordPageDataWithError(r *http.Request, msg string, csrf string) pageData {
+	data := changePasswordPageData(r)
+	data.Error = msg
+	data.CSRF = csrf
+	return data
+}
+
 func (a *app) authenticate(r *http.Request) (principal, bool) {
 	c, err := r.Cookie("filehub_session")
 	if err != nil || len(c.Value) < 32 {
@@ -389,11 +502,12 @@ func (a *app) authenticate(r *http.Request) (principal, bool) {
 	}
 	var p principal
 	var expires string
-	var disabled int
-	err = a.db.QueryRow(`SELECT u.id,u.username,u.role,s.csrf,s.expires_at,u.disabled FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?`, tokenHash(c.Value)).Scan(&p.UserID, &p.Username, &p.Role, &p.CSRF, &expires, &disabled)
+	var disabled, mustChange int
+	err = a.db.QueryRow(`SELECT u.id,u.username,u.role,s.csrf,s.expires_at,u.disabled,u.must_change_password FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?`, tokenHash(c.Value)).Scan(&p.UserID, &p.Username, &p.Role, &p.CSRF, &expires, &disabled, &mustChange)
 	if err != nil || disabled != 0 {
 		return principal{}, false
 	}
+	p.MustChangePassword = mustChange == 1
 	p.Expires, _ = time.Parse("2006-01-02 15:04:05", expires)
 	if time.Now().UTC().After(p.Expires) {
 		_, _ = a.db.Exec(`DELETE FROM sessions WHERE token_hash=?`, tokenHash(c.Value))
@@ -407,6 +521,10 @@ func (a *app) requireAuth(next func(http.ResponseWriter, *http.Request, principa
 		p, ok := a.authenticate(r)
 		if !ok {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if p.MustChangePassword && r.URL.Path != "/change-password" && r.URL.Path != "/logout" {
+			http.Redirect(w, r, "/change-password", http.StatusSeeOther)
 			return
 		}
 		next(w, r, p)
@@ -543,9 +661,22 @@ func (a *app) upload(w http.ResponseWriter, r *http.Request, p principal) {
 	defer a.writeMu.Unlock()
 	used := dirSize(root)
 	quota := a.userQuota(p.UserID)
-	for _, fh := range files {
-		name := filepath.Base(strings.ReplaceAll(fh.Filename, "\\", "/"))
-		if name == "." || name == "" || strings.HasPrefix(name, ".") {
+	// Optional per-file relative paths submitted by the folder-upload UI.
+	// When present they line up with files[] by index and carry structure
+	// such as "photos/2024/img.png"; otherwise we fall back to the base name.
+	paths := r.MultipartForm.Value["paths"]
+	for idx, fh := range files {
+		raw := fh.Filename
+		if idx < len(paths) && paths[idx] != "" {
+			raw = paths[idx]
+		}
+		// Preserve folder structure: the relative path is sanitized and we
+		// create intermediate directories before writing the file.
+		fileRel, err := cleanRel(raw)
+		if err != nil || fileRel == "" {
+			continue
+		}
+		if strings.HasPrefix(filepath.Base(fileRel), ".") {
 			continue
 		}
 		src, err := fh.Open()
@@ -553,10 +684,15 @@ func (a *app) upload(w http.ResponseWriter, r *http.Request, p principal) {
 			serverError(w, err)
 			return
 		}
-		dest, err := safeJoin(destDir, name)
+		dest, err := safeJoin(destDir, fileRel)
 		if err != nil {
 			src.Close()
 			badRequest(w, "文件名无效")
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0750); err != nil {
+			src.Close()
+			serverError(w, err)
 			return
 		}
 		var oldSize int64
@@ -594,7 +730,7 @@ func (a *app) upload(w http.ResponseWriter, r *http.Request, p principal) {
 			return
 		}
 		used = used - oldSize + n
-		uploadedPath := path.Join(rel, name)
+		uploadedPath := path.Join(rel, fileRel)
 		if _, err := a.ensureShare(p.UserID, uploadedPath); err != nil {
 			serverError(w, err)
 			return
@@ -820,9 +956,41 @@ func (a *app) publicShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !info.IsDir() {
+		// An HTML or Markdown share acts like a mini-site: assets referenced
+		// with relative URLs (images, css, js, sub-pages) are served from
+		// the same directory tree, mirroring the preview endpoint behaviour.
+		// Without a trailing slash the browser resolves relative asset URLs
+		// against /s/ (dropping the token) and they 404, so redirect.
+		if len(parts) == 1 {
+			if detectPreview(s.RelPath, false) == "html" {
+				http.Redirect(w, r, "/s/"+parts[0]+"/", http.StatusSeeOther)
+				return
+			}
+		}
 		if len(parts) > 1 && parts[1] != "" {
-			http.NotFound(w, r)
-			return
+			switch detectPreview(s.RelPath, false) {
+			case "html", "markdown":
+				assetRel, err := cleanRel(parts[1])
+				if err != nil {
+					http.NotFound(w, r)
+					return
+				}
+				asset, err := safeJoin(filepath.Dir(base), assetRel)
+				if err != nil {
+					http.NotFound(w, r)
+					return
+				}
+				assetInfo, err := os.Stat(asset)
+				if err != nil || assetInfo.IsDir() {
+					http.NotFound(w, r)
+					return
+				}
+				serveSharedFile(w, r, asset, assetInfo)
+				return
+			default:
+				http.NotFound(w, r)
+				return
+			}
 		}
 		if detectPreview(s.RelPath, false) == "markdown" {
 			a.serveMarkdownPreview(w, r, base, info.Name(), "/s/"+parts[0]+"/")
