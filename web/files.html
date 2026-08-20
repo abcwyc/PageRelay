@@ -2,7 +2,7 @@
 <div id="file-workspace" class="workspace" data-csrf="{{.CSRF}}" data-username="{{.Username}}" data-role="{{.Role}}" data-initial-path="{{.CurrentPath}}" data-used="{{.Used}}" data-quota="{{.Quota}}">
   <aside id="workspace-sidebar" class="workspace-sidebar" aria-label="文件导航">
     <header class="sidebar-brand">
-      <a href="/files" aria-label="哈啰租车 FileHub 首页"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><span>FileHub</span></a>
+      <a href="/files" aria-label="哈啰租车 PageRelay 首页"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><span>PageRelay</span></a>
       <button id="sidebar-close" class="quiet-icon mobile-only" type="button" aria-label="关闭文件导航">×</button>
     </header>
 
@@ -102,6 +102,13 @@
       <div id="preview-stage" class="preview-stage"></div>
       <footer id="file-metadata" class="file-metadata"></footer>
     </section>
+    <div id="main-upload-overlay" class="main-upload-overlay" hidden aria-hidden="true">
+      <div>
+        <span class="main-upload-symbol" aria-hidden="true">↑</span>
+        <strong>上传到当前目录</strong>
+        <small id="main-upload-destination"></small>
+      </div>
+    </div>
   </main>
   <button id="sidebar-scrim" class="sidebar-scrim" type="button" aria-label="关闭侧栏" hidden></button>
 </div>

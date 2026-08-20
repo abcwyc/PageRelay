@@ -54,7 +54,8 @@
     sourceToggle: qs('#source-toggle'), edit: qs('#edit-file'), rename: qs('#rename-file'), remove: qs('#delete-file'),
     move: qs('#move-file'), batchActions: qs('#batch-actions'), batchCount: qs('#batch-count'), selectAll: qs('#select-all'),
     search: qs('#file-search'), storageLabel: qs('#storage-label'), storageMeter: qs('#storage-meter'), toast: qs('#toast-region'),
-    rowActionMenu: qs('#row-action-menu'),
+    rowActionMenu: qs('#row-action-menu'), main: qs('.workspace-main'), uploadOverlay: qs('#main-upload-overlay'),
+    uploadDestination: qs('#main-upload-destination'),
   };
 
   initDivider();
@@ -751,11 +752,49 @@
 
   function initUpload() {
     const form = qs('#upload-form'); const input = qs('#file-input'); const queue = qs('#upload-queue'); const progress = qs('.upload-progress', form); const bar = qs('i', progress);
+    let mainDragDepth = 0;
+    const carriesExternalFiles = event => !state.dragPaths.length && [...(event.dataTransfer?.types || [])].includes('Files');
+    const showMainDropTarget = () => {
+      elements.uploadDestination.textContent = logicalPath(state.currentDir);
+      elements.uploadOverlay.hidden = false;
+      elements.main.classList.add('upload-drop-active');
+    };
+    const hideMainDropTarget = () => {
+      mainDragDepth = 0;
+      elements.uploadOverlay.hidden = true;
+      elements.main.classList.remove('upload-drop-active');
+    };
     form.addEventListener('click', event => { if (event.target.tagName !== 'INPUT') input.click(); });
     form.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); input.click(); } });
     ['dragenter', 'dragover'].forEach(type => form.addEventListener(type, event => { event.preventDefault(); if (state.dragPaths.length) { event.dataTransfer.dropEffect = 'none'; return; } form.classList.add('dragging'); }));
     ['dragleave', 'drop'].forEach(type => form.addEventListener(type, event => { event.preventDefault(); form.classList.remove('dragging'); }));
     form.addEventListener('drop', event => { if (!state.dragPaths.length) upload(event.dataTransfer.files); }); input.addEventListener('change', () => upload(input.files));
+    elements.main.addEventListener('dragenter', event => {
+      if (!carriesExternalFiles(event)) return;
+      event.preventDefault();
+      mainDragDepth += 1;
+      showMainDropTarget();
+    });
+    elements.main.addEventListener('dragover', event => {
+      if (!carriesExternalFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      showMainDropTarget();
+    });
+    elements.main.addEventListener('dragleave', event => {
+      if (!carriesExternalFiles(event)) return;
+      mainDragDepth = Math.max(0, mainDragDepth - 1);
+      if (!mainDragDepth) hideMainDropTarget();
+    });
+    elements.main.addEventListener('drop', event => {
+      if (!carriesExternalFiles(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const files = event.dataTransfer.files;
+      hideMainDropTarget();
+      upload(files);
+    });
+    window.addEventListener('blur', hideMainDropTarget);
     async function upload(files) {
       if (!files?.length) return;
       const duplicates = [...files].filter(file => state.items.some(item => item.type === 'file' && item.name === file.name));

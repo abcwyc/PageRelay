@@ -1,12 +1,13 @@
 {{define "layout.html"}}
 <!doctype html>
-<html lang="zh-CN">
+<html lang="{{if .Data.Lang}}{{.Data.Lang}}{{else}}zh-CN{{end}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>{{.Data.Title}} · FileHub</title>
-  <link rel="stylesheet" href="/assets/app.css?v=4">
+  <title>{{.Data.Title}} · PageRelay</title>
+  <link rel="icon" type="image/png" sizes="64x64" href="/assets/rental-app-icon.png?v=1">
+  <link rel="stylesheet" href="/assets/app.css?v=6">
 </head>
 <body class="page-{{.View}}">
 {{if eq .View "login"}}{{template "login" .Data}}
@@ -15,7 +16,7 @@
 {{else}}
   <div class="legacy-shell">
     <aside class="legacy-sidebar">
-      <a class="brand-logo" href="/files"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>FileHub</small></a>
+      <a class="brand-logo" href="/files"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>PageRelay</small></a>
       <nav>
         <a href="/files">文件工作台</a>
         <a class="{{if eq .Data.Page "shares"}}active{{end}}" href="/shares">分享记录</a>
@@ -34,7 +35,7 @@
     </main>
   </div>
 {{end}}
-<script src="/assets/app.js?v=8" defer></script>
+<script src="/assets/app.js?v=9" defer></script>
 </body>
 </html>
 {{end}}

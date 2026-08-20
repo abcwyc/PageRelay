@@ -146,6 +146,19 @@ func TestAccountIsolationUploadAndPublicShare(t *testing.T) {
 	if !strings.Contains(loginPage.Body.String(), `id="login-form"`) || !strings.Contains(loginPage.Body.String(), `type="submit"`) {
 		t.Fatal("login form is missing keyboard-submit semantics")
 	}
+	if !strings.Contains(loginPage.Body.String(), "PageRelay") || !strings.Contains(loginPage.Body.String(), "将本地文件快速变成可分享的网页。") {
+		t.Fatal("Chinese login page is missing the PageRelay name or slogan")
+	}
+
+	englishRequest := httptest.NewRequest(http.MethodGet, "/login", nil)
+	englishRequest.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	englishPage := httptest.NewRecorder()
+	manage.ServeHTTP(englishPage, englishRequest)
+	if englishPage.Code != http.StatusOK || !strings.Contains(englishPage.Body.String(), `lang="en"`) ||
+		!strings.Contains(englishPage.Body.String(), "Turn local files into shareable web pages.") ||
+		!strings.Contains(englishPage.Body.String(), ">Sign in</button>") {
+		t.Fatalf("English login page is not localized: status=%d", englishPage.Code)
+	}
 
 	adminCookie := loginAs(t, manage, "admin", testAdminPassword)
 	adminPrincipal, ok := a.authenticate(requestWithCookie(http.MethodGet, "/files", nil, adminCookie))
@@ -279,11 +292,13 @@ func TestWorkspaceAPIsPermanentShareAndPreview(t *testing.T) {
 	if workspacePage.Code != http.StatusOK || !strings.Contains(workspacePage.Body.String(), "<span>操作</span>") ||
 		!strings.Contains(workspacePage.Body.String(), `id="row-action-menu"`) ||
 		!strings.Contains(workspacePage.Body.String(), `id="row-rename-file"`) ||
-		!strings.Contains(workspacePage.Body.String(), `id="row-delete-file"`) {
+		!strings.Contains(workspacePage.Body.String(), `id="row-delete-file"`) ||
+		!strings.Contains(workspacePage.Body.String(), `id="main-upload-overlay"`) ||
+		!strings.Contains(workspacePage.Body.String(), `/assets/rental-app-icon.png?v=1`) {
 		t.Fatal("workspace file list is missing per-row file actions")
 	}
 
-	markdown := "# Preview title\n\nHello **FileHub**.\n\n```mermaid\nflowchart LR\n  A[上传] --> B[分享]\n```\n\n<script>alert('xss')</script>\n"
+	markdown := "# Preview title\n\nHello **PageRelay**.\n\n```mermaid\nflowchart LR\n  A[上传] --> B[分享]\n```\n\n<script>alert('xss')</script>\n"
 	if got := uploadFile(t, manage, cookie, p.CSRF, "readme.md", markdown); got.Code != http.StatusSeeOther {
 		t.Fatalf("Markdown upload status=%d body=%s", got.Code, got.Body.String())
 	}
@@ -408,6 +423,11 @@ func TestWorkspaceAPIsPermanentShareAndPreview(t *testing.T) {
 	manage.ServeHTTP(logoRec, httptest.NewRequest(http.MethodGet, "/assets/hello-rental-logo.png", nil))
 	if logoRec.Code != http.StatusOK || logoRec.Header().Get("Content-Type") != "image/png" || logoRec.Body.Len() < 1000 {
 		t.Fatalf("logo asset status=%d type=%q bytes=%d", logoRec.Code, logoRec.Header().Get("Content-Type"), logoRec.Body.Len())
+	}
+	iconRec := httptest.NewRecorder()
+	manage.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/assets/rental-app-icon.png", nil))
+	if iconRec.Code != http.StatusOK || iconRec.Header().Get("Content-Type") != "image/png" || iconRec.Body.Len() < 1000 {
+		t.Fatalf("icon asset status=%d type=%q bytes=%d", iconRec.Code, iconRec.Header().Get("Content-Type"), iconRec.Body.Len())
 	}
 }
 

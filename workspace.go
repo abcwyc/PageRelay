@@ -555,7 +555,7 @@ func (a *app) apiDownload(w http.ResponseWriter, r *http.Request, p principal) {
 		downloads = append(downloads, download{rel: rel, full: full})
 	}
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="filehub-%s.zip"`, time.Now().Format("20060102-1504")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="pagerelay-%s.zip"`, time.Now().Format("20060102-1504")))
 	archive := zip.NewWriter(w)
 	defer archive.Close()
 	for _, selected := range downloads {

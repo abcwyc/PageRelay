@@ -1,13 +1,13 @@
 {{define "public"}}
 <main class="public-wrap">
   <header class="public-head">
-    <a class="brand-logo" href="#"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>FileHub</small></a>
+    <a class="brand-logo" href="#"><img src="/assets/hello-rental-logo.png" alt="哈啰租车"><small>PageRelay</small></a>
     <div><p class="eyebrow">公开分享</p><h1>{{.Title}}</h1>{{if .CurrentPath}}<p class="muted">{{.CurrentPath}}</p>{{end}}</div>
   </header>
   <section class="panel public-panel">
     <div class="table-head public-cols"><span>名称</span><span>大小</span><span>修改时间</span></div>
     {{range .Files}}<a class="file-row public-cols" href="{{.URL}}"><span class="file-name"><b class="file-icon {{if eq .Type "dir"}}folder{{end}}">{{if eq .Type "dir"}}▰{{else}}◇{{end}}</b>{{.Name}}</span><span>{{if eq .Type "dir"}}—{{else}}{{formatBytes .Size}}{{end}}</span><span>{{.Modified}}</span></a>{{else}}<div class="empty">目录为空</div>{{end}}
   </section>
-  <footer>由 FileHub 安全分享</footer>
+  <footer>由 PageRelay 安全分享</footer>
 </main>
 {{end}}

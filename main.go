@@ -87,12 +87,12 @@ type fileItem struct {
 }
 
 type pageData struct {
-	Title, Page, CSRF, Username, Role, CurrentPath, ParentPath, ShareURL, Error, Notice string
-	Quota, Used                                                                         int64
-	Users                                                                               []user
-	Files                                                                               []fileItem
-	Shares                                                                              []share
-	Audit                                                                               []map[string]string
+	Title, Page, Lang, Slogan, CSRF, Username, Role, CurrentPath, ParentPath, ShareURL, Error, Notice string
+	Quota, Used                                                                                       int64
+	Users                                                                                             []user
+	Files                                                                                             []fileItem
+	Shares                                                                                            []share
+	Audit                                                                                             []map[string]string
 }
 
 var usernameRx = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{2,31}$`)
@@ -132,11 +132,11 @@ func main() {
 
 	errCh := make(chan error, 2)
 	go func() {
-		log.Printf("FileHub management listening on http://%s", cfg.listen)
+		log.Printf("PageRelay management listening on http://%s", cfg.listen)
 		errCh <- serve(cfg.listen, a.managementHandler())
 	}()
 	go func() {
-		log.Printf("FileHub shares listening on http://%s", cfg.shareListen)
+		log.Printf("PageRelay shares listening on http://%s", cfg.shareListen)
 		errCh <- serve(cfg.shareListen, a.publicHandler())
 	}()
 	log.Fatal(<-errCh)
@@ -225,7 +225,7 @@ func staticAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
-	if name != "app.css" && name != "app.js" && name != "hello-rental-logo.png" && name != "mermaid.min.js" {
+	if name != "app.css" && name != "app.js" && name != "hello-rental-logo.png" && name != "rental-app-icon.png" && name != "mermaid.min.js" {
 		http.NotFound(w, r)
 		return
 	}
@@ -264,7 +264,7 @@ func (a *app) migrate() error {
 	}
 	_, _ = a.db.Exec(`DELETE FROM sessions WHERE expires_at < datetime('now')`)
 	_, _ = a.db.Exec(`DELETE FROM preview_tokens WHERE expires_at < datetime('now')`)
-	// FileHub 2.0 uses a simple enabled/disabled share state. Keep every
+	// PageRelay 2.0 uses a simple enabled/disabled share state. Keep every
 	// previously active link valid and leave revoked links revoked.
 	_, _ = a.db.Exec(`UPDATE shares SET expires_at=NULL WHERE active=1`)
 	_, _ = a.db.Exec(`PRAGMA optimize`)
@@ -312,8 +312,9 @@ func (a *app) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Accept-Language")
 	if r.Method == http.MethodGet {
-		a.render(w, "login", pageData{Title: "登录", Page: "login"})
+		a.render(w, "login", loginPageData(r, false))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -331,7 +332,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	if err != nil || disabled != 0 || !verifyPassword(hash, r.FormValue("password")) {
 		a.audit(0, "login_failed", strings.TrimSpace(r.FormValue("username")), clientIP(r))
 		time.Sleep(350 * time.Millisecond)
-		a.renderStatus(w, http.StatusUnauthorized, "login", pageData{Title: "登录", Page: "login", Error: "用户名或密码不正确"})
+		a.renderStatus(w, http.StatusUnauthorized, "login", loginPageData(r, true))
 		return
 	}
 	token, csrf := randomToken(32), randomToken(24)
@@ -343,6 +344,24 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "filehub_session", Value: token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.cfg.cookieSecure, Expires: expires})
 	a.audit(u.ID, "login", "", clientIP(r))
 	http.Redirect(w, r, "/files", http.StatusSeeOther)
+}
+
+func loginPageData(r *http.Request, invalidCredentials bool) pageData {
+	data := pageData{Title: "登录", Page: "login", Lang: "zh-CN", Slogan: "将本地文件快速变成可分享的网页。"}
+	primaryLanguage := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Accept-Language"), ",")[0]))
+	if strings.HasPrefix(primaryLanguage, "en") {
+		data.Title = "Sign in"
+		data.Lang = "en"
+		data.Slogan = "Turn local files into shareable web pages."
+	}
+	if invalidCredentials {
+		if data.Lang == "en" {
+			data.Error = "Incorrect username or password"
+		} else {
+			data.Error = "用户名或密码不正确"
+		}
+	}
+	return data
 }
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
