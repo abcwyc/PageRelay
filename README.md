@@ -6,7 +6,7 @@ English | [中文](./README.zh-CN.md)
 
 ## Live Demo
 
-- **URL**: <https://pagerelay.348580.xyz/>
+- **URL**: <https://pagerelay.348580.xyz/login>
 - **Account**: `demo`
 - **Password**: `1234567890`
 

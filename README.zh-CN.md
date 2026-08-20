@@ -12,7 +12,7 @@ PageRelay 把“上传文件 → 生成链接 → 对外分享”这条最常见
 
 如果你想先体验再决定是否部署，可以使用官方在线 Demo：
 
-- **Demo 地址**：<https://pagerelay.348580.xyz/>
+- **Demo 地址**：<https://pagerelay.348580.xyz/login>
 - **账号**：`demo`
 - **密码**：`1234567890`
 
